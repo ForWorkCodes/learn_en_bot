@@ -1,22 +1,42 @@
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 
 from .config import load_settings
 from .db import Database
 from .gemini import GeminiClient
-from .handlers import start_router, chat_router
+from .handlers import start_router, chat_router, lesson_router
 from .handlers import start as start_module
 from .handlers import chat as chat_module
+from .handlers import lesson as lesson_module
 from .scheduler import setup_scheduler
 
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s")
+def setup_logging() -> None:
+    fmt = "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s"
+    logging.basicConfig(level=logging.INFO, format=fmt)
+
+    project_root = Path(__file__).resolve().parents[1]
+    logs_dir = project_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(logs_dir / "bot.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(fmt))
+
+    root = logging.getLogger()
+    # Avoid double-adding the handler if reloads happen
+    if not any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+        root.addHandler(file_handler)
+
+
 logger = logging.getLogger("learn_en_bot")
 
 
 async def main() -> None:
+    setup_logging()
     settings = load_settings()
 
     if not settings.telegram_bot_token:
@@ -36,12 +56,24 @@ async def main() -> None:
     # Handlers
     start_module.setup(start_router, db)
     chat_module.setup(chat_router, db, gemini)
+    lesson_module.setup(lesson_router, db, gemini)
     dp.include_router(start_router)
     dp.include_router(chat_router)
+    dp.include_router(lesson_router)
 
     # Scheduler
     scheduler = setup_scheduler(bot, db, gemini, cron=settings.schedule_cron, tz=settings.tz)
     scheduler.start()
+
+    # Bot menu commands
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Начать"),
+            BotCommand(command="lesson", description="Получить фразовый глагол"),
+        ])
+    except Exception:
+        logger.warning("Failed to set bot commands", exc_info=True)
 
     logger.info("Bot started. Polling...")
     await dp.start_polling(bot)

@@ -1,9 +1,10 @@
 import google.generativeai as genai
 from typing import Optional
+import logging
 
 
 class GeminiClient:
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash") -> None:
+    def __init__(self, api_key: str, model: str = "gemini-2.5-pro") -> None:
         self.api_key = api_key
         self.model_name = model
         if not api_key:
@@ -15,6 +16,7 @@ class GeminiClient:
 
     def generate(self, prompt: str, fallback: str = "") -> str:
         if not self.model:
+            logging.getLogger("gemini").warning("GEMINI_API_KEY is not set; returning fallback")
             return fallback or "(No GEMINI_API_KEY set — returning placeholder)"
         try:
             response = self.model.generate_content(prompt)
@@ -25,6 +27,7 @@ class GeminiClient:
             # fallback на raw
             return str(response)
         except Exception as e:
+            logging.getLogger("gemini").exception("Gemini generate error: %s", e)
             return fallback or f"(Gemini error: {e})"
 
     def daily_tip(self) -> str:
