@@ -27,22 +27,23 @@ def setup(router_, db: Database, gemini: GeminiClient):
             )
             if mastered:
                 db.mark_mastered(assgn.id)
-                await message.answer(feedback + "\nОтлично! Задание на сегодня выполнено ✅")
+                await message.answer(feedback + "\n<b>Отлично!</b> Задание на сегодня выполнено ✅")
             else:
                 await message.answer(feedback)
             return
 
-        # Фоллбек на общий диалог
+        # Общий диалог: просим Gemini вернуть HTML-фрагмент вместо Markdown
         reply = await asyncio.to_thread(
             gemini.generate,
             prompt=(
-                f"Пользователь спрашивает про английский: {text}\n"
-                "Ответь по существу, кратко и дружелюбно на русском."
+                f"Пользователь задаёт вопрос: {text}\n"
+                "Ответь кратко по сути на русском. Верни HTML-фрагмент без <html>/<body>,"
+                " используй только теги: b, i, u, s, code, pre, a, ul, ol, li, br."
+                " Не используй Markdown."
             ),
             fallback="Пока не могу ответить. Попробуйте позже.",
         )
         await message.answer(reply)
 
-    # Регистрируем AFTER командных хэндлеров
     router_.message.register(on_text)
 

@@ -4,6 +4,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from .config import load_settings
 from .db import Database
@@ -50,7 +52,10 @@ async def main() -> None:
     gemini = GeminiClient(settings.gemini_api_key)
 
     # Bot
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(
+        token=settings.telegram_bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
 
     scheduler = await setup_scheduler(
@@ -79,6 +84,16 @@ async def main() -> None:
         ])
     except Exception:
         logger.warning("Failed to set bot commands", exc_info=True)
+
+    # Ensure commands descriptions are set in readable Russian
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Начать"),
+            BotCommand(command="lesson", description="Получить фразовый глагол"),
+        ])
+    except Exception:
+        logger.warning("Failed to override bot commands", exc_info=True)
 
     logger.info("Bot started. Polling...")
     await dp.start_polling(bot)

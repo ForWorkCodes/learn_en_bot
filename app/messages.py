@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 
 
 def format_assignment_message(*, verb: str, translation: str, explanation: str, examples_json: str) -> str:
@@ -9,22 +10,27 @@ def format_assignment_message(*, verb: str, translation: str, explanation: str, 
     except Exception:
         examples = []
 
+    v = html.escape(verb)
+    tr = html.escape(translation)
+    ex_text = html.escape(explanation.strip())
+
     example_text = ""
     for item in examples:
         if isinstance(item, str) and item.strip():
-            example_text = item.strip()
+            example_text = html.escape(item.strip())
             break
 
-    lines: list[str] = [
-        f"Глагол: {verb} — {translation}",
-        f"Объяснение: {explanation.strip()}",
+    parts: list[str] = [
+        f"<b>Фразовый глагол дня:</b> {v} — {tr}",
+        f"<i>{ex_text}</i>",
     ]
 
     if example_text:
-        lines.append(f"Пример: {example_text}")
+        parts.append(f"<b>Пример:</b> {example_text}")
     else:
-        lines.append("Пример: скоро добавлю подходящее предложение.")
+        parts.append("<b>Пример:</b> попробуй составить короткое предложение с этим глаголом.")
 
-    lines.append("")
-    lines.append("Составь своё предложение с этим глаголом — я помогу его проверить.")
-    return "\n".join(lines)
+    parts.append("")
+    parts.append("Напиши своё короткое предложение — я подскажу, всё ли верно.")
+    return "<br>".join(parts)
+

@@ -162,7 +162,8 @@ class LessonScheduler:
             return
 
         reminder = (
-            f"Напоминание: составь ещё одно предложение с глаголом \"{assignment.phrasal_verb}\"."
+            f"<b>Напоминание:</b> вернись к фразовому глаголу \"{assignment.phrasal_verb}\"."
+            " Составь ещё одно короткое предложение — я подскажу, всё ли верно."
         )
 
         try:
@@ -190,3 +191,4 @@ async def setup_scheduler(
     scheduler = LessonScheduler(bot, db, gemini, default_cron=cron, timezone=tz)
     await scheduler.initialize()
     return scheduler
+
