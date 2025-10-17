@@ -53,17 +53,22 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher()
 
+    scheduler = await setup_scheduler(
+        bot,
+        db,
+        gemini,
+        cron=settings.schedule_cron,
+        tz=settings.tz,
+    )
+    scheduler.start()
+
     # Handlers
-    start_module.setup(start_router, db)
+    start_module.setup(start_router, db, scheduler)
     chat_module.setup(chat_router, db, gemini)
-    lesson_module.setup(lesson_router, db, gemini)
+    lesson_module.setup(lesson_router, db, gemini, scheduler)
     dp.include_router(start_router)
     dp.include_router(chat_router)
     dp.include_router(lesson_router)
-
-    # Scheduler
-    scheduler = setup_scheduler(bot, db, gemini, cron=settings.schedule_cron, tz=settings.tz)
-    scheduler.start()
 
     # Bot menu commands
     try:
