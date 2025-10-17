@@ -1,33 +1,40 @@
 # Learn EN Bot — Skeleton
 
-Конструктив для телеграм‑бота с:
+Телеграм-бот для ежедневных уроков с фразовыми глаголами:
 - Aiogram (бот, хэндлеры)
-- SQLite/SQLAlchemy (БД + пользователи)
-- Google Gemini (генерация ответов)
-- APScheduler (периодические сообщения пользователям)
+- SQLite/SQLAlchemy (пользователи и задания)
+- Google Gemini (подбор глагола и оценка ответов)
+- APScheduler (ежедневные задания и напоминания)
 
 ## Быстрый старт
 
-1) Создайте и заполните `.env` на основе `.env.example`.
+1) Скопируйте `.env.example` в `.env` и заполните:
+   - `TELEGRAM_BOT_TOKEN`
+   - `GEMINI_API_KEY`
+   - при необходимости: `DATABASE_URL`, `SCHEDULE_CRON`, `TZ`
 2) Установите зависимости:
    - `python -m venv .venv`
-   - `.venv\\Scripts\\activate` (Windows)
+   - `.venv\\\\Scripts\\\\activate` (Windows)
    - `pip install -r requirements.txt`
-3) Запуск бота: `python -m app.main`
+3) Запуск: `python -m app.main`
 
-## Переменные окружения
-См. `./.env.example`.
+## Логика
+- Раз в день бот создаёт персональное задание: фразовый глагол с переводом, объяснением и примерами.
+- В течение дня бот шлёт 2 напоминания и просит составить предложения.
+- Любое сообщение пользователя в этот день оценивается через Gemini на корректность использования глагола.
+- Если ответ достаточно хороший (оценка ≥ 4/5), задание помечается выполненным.
 
-## Структура
-- `app/main.py` — вход, запуск бота и планировщика
-- `app/config.py` — загрузка конфигурации из .env
+## Файлы
+- `app/main.py` — запуск бота и планировщика
+- `app/config.py` — конфиг из `.env`
+- `app/models.py` — `User`, `Assignment`
 - `app/db.py` — инициализация БД и helper-функции
-- `app/models.py` — модели SQLAlchemy
-- `app/gemini.py` — обёртка над Google Gemini API
-- `app/handlers/start.py` — хэндлеры команд/сообщений
-- `app/scheduler.py` — периодические задания
+- `app/gemini.py` — генерация задания и оценка ответа
+- `app/handlers/start.py` — `/start`
+- `app/handlers/chat.py` — обработка сообщений и оценка прогресса
+- `app/scheduler.py` — ежедневное создание задания и напоминания
 
 ## Заметки
 - По умолчанию используется SQLite файл `learn_en.db` в корне.
-- Для Gemini нужен ключ в `GEMINI_API_KEY`.
-- Планировщик шлёт периодическое сообщение всем пользователям, кто нажал `/start`.
+- Для Gemini обязателен `GEMINI_API_KEY`.
+- Расписание задаётся `SCHEDULE_CRON` (формат cron), таймзона — `TZ`.

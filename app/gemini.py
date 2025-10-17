@@ -34,3 +34,62 @@ class GeminiClient:
         )
         return self.generate(prompt, fallback="Совет дня: выучи 3 новых слова и составь с ними предложения.")
 
+    def generate_phrasal_verb(self, user_hint: str | None = None) -> dict:
+        prompt = (
+            "Подбери один английский фразовый глагол для изучения сегодня. "
+            "Ответ дай строго в JSON с полями: verb (строка), translation (краткий перевод на русский), "
+            "explanation (короткое дружелюбное объяснение на русском), examples (массив из 2-3 коротких примеров на английском)."
+        )
+        if user_hint:
+            prompt += f"\nУчти информацию о пользователе: {user_hint}."
+        raw = self.generate(prompt)
+        import json, re
+        # Попытаться извлечь JSON из ответа
+        try:
+            m = re.search(r"\{[\s\S]*\}", raw)
+            if m:
+                raw = m.group(0)
+            data = json.loads(raw)
+            if not all(k in data for k in ("verb", "translation", "explanation", "examples")):
+                raise ValueError("missing keys")
+            if not isinstance(data.get("examples"), list):
+                raise ValueError("examples must be list")
+            return data
+        except Exception:
+            # Fallback минимально валидный
+            return {
+                "verb": "pick up",
+                "translation": "подобрать; выучить",
+                "explanation": "Часто значит усвоить что-то по ходу дела или поднять с земли.",
+                "examples": [
+                    "She picked up Spanish while living in Madrid.",
+                    "Please pick up the book from the floor.",
+                ],
+            }
+
+    def evaluate_usage(self, verb: str, user_text: str) -> tuple[str, bool]:
+        prompt = (
+            "Оцени, верно ли пользователь использует фразовый глагол. "
+            "Дай краткую обратную связь на русском и выставь оценку от 1 до 5. "
+            "Формат ответa строго: JSON с полями feedback (строка), score (число 1-5).\n"
+            f"Целевой фразовый глагол: {verb}\n"
+            f"Ответ пользователя: {user_text}\n"
+        )
+        raw = self.generate(prompt)
+        import json, re
+        try:
+            m = re.search(r"\{[\s\S]*\}", raw)
+            if m:
+                raw = m.group(0)
+            data = json.loads(raw)
+            feedback = str(data.get("feedback", ""))
+            score = int(data.get("score", 0))
+            mastered = score >= 4
+            if not feedback:
+                feedback = "Хорошая попытка! Попробуй составить ещё одно предложение."
+            return feedback, mastered
+        except Exception:
+            return (
+                "Спасибо! Постарайся составить короткое предложение с этим фразовым глаголом.",
+                False,
+            )
