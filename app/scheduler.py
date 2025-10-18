@@ -58,24 +58,48 @@ class LessonScheduler:
         self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
 
     def plan_followups(self, user_id: int, assignment_id: int) -> None:
-        now = datetime.now(self.timezone)
-        follow1_time = now + timedelta(hours=4)
-        follow2_time = now + timedelta(hours=9)
+        base_dt = datetime.now(self.timezone)
 
-        self.scheduler.add_job(
-            self._send_followup,
-            trigger=DateTrigger(run_date=follow1_time, timezone=self.timezone),
-            args=[user_id, assignment_id, 1],
-            id=self._followup_job_id(assignment_id, 1),
-            replace_existing=True,
-        )
-        self.scheduler.add_job(
-            self._send_followup,
-            trigger=DateTrigger(run_date=follow2_time, timezone=self.timezone),
-            args=[user_id, assignment_id, 2],
-            id=self._followup_job_id(assignment_id, 2),
-            replace_existing=True,
-        )
+        # Allowed window: Today 11:00–23:00 (inclusive), local tz
+        window_start = base_dt.replace(hour=11, minute=0, second=0, microsecond=0)
+        window_end = base_dt.replace(hour=23, minute=0, second=0, microsecond=0)
+
+        # Proposals relative to assignment send time
+        proposed_1 = base_dt + timedelta(hours=2)
+        proposed_2 = base_dt + timedelta(hours=7)
+
+        # Clamp to window and ensure strictly after base_dt
+        follow_times = []
+        for candidate in (proposed_1, proposed_2):
+            # If before the window start, push to window start
+            if candidate < window_start:
+                candidate = window_start
+            # If after window end, skip
+            if candidate > window_end:
+                continue
+            # Ensure after assignment time
+            if candidate <= base_dt:
+                # If there is still time to send before window_end, try a small delta
+                candidate = min(window_end, base_dt + timedelta(minutes=15))
+                if candidate <= base_dt:
+                    continue
+            follow_times.append(candidate)
+
+        # Deduplicate and keep chronological
+        uniq = []
+        for t in sorted(follow_times):
+            if not uniq or (t - uniq[-1]).total_seconds() >= 60:
+                uniq.append(t)
+
+        # Schedule up to two follow-ups
+        for idx, when in enumerate(uniq[:2], start=1):
+            self.scheduler.add_job(
+                self._send_followup,
+                trigger=DateTrigger(run_date=when, timezone=self.timezone),
+                args=[user_id, assignment_id, idx],
+                id=self._followup_job_id(assignment_id, idx),
+                replace_existing=True,
+            )
 
     async def _schedule_existing_custom_jobs(self) -> None:
         users = await asyncio.to_thread(self.db.list_users)
@@ -191,4 +215,3 @@ async def setup_scheduler(
     scheduler = LessonScheduler(bot, db, gemini, default_cron=cron, timezone=tz)
     await scheduler.initialize()
     return scheduler
-

@@ -4,7 +4,7 @@ import logging
 
 
 class GeminiClient:
-    def __init__(self, api_key: str, model: str = "gemini-2.5-pro") -> None:
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
         self.api_key = api_key
         self.model_name = model
         if not api_key:
