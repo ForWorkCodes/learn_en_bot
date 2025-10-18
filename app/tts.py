@@ -22,7 +22,7 @@ class GeminiTtsProvider:
         client: "GeminiClient",
         *,
         voice: Optional[str] = None,
-        mime_type: str = "audio/mp3",
+        mime_type: str = "audio/ogg; codecs=opus",
         languages: Sequence[str] = ("en", "ru"),
     ) -> None:
         self._client = client
