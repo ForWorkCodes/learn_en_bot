@@ -14,6 +14,9 @@ from google.generativeai import types as genai_types
 logger = logging.getLogger("gemini")
 
 
+FIXED_TTS_TEXT = "Всем привет and hello world"
+
+
 class GeminiClient:
     def __init__(
         self,
@@ -73,25 +76,36 @@ class GeminiClient:
         voice: Optional[str] = None,
         mime_type: str = "audio/ogg; codecs=opus",
     ) -> bytes:
-        clean_text = (text or "").strip()
-        if not clean_text:
+        original_text = (text or "").strip()
+        if not original_text:
             raise ValueError("Cannot synthesize empty text")
+
+        clean_text = FIXED_TTS_TEXT
+        logger.debug(
+            "Gemini TTS input is overridden with the fixed sample phrase: %s",
+            clean_text,
+        )
         if not self.tts_model:
             logger.debug("Gemini SDK TTS model is unavailable; using direct HTTP request")
             return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
 
+        generation_config_obj: Optional[genai_types.GenerationConfig] = None
+
+        if mime_type and not mime_type.startswith("audio/"):
+            generation_config_obj = genai_types.GenerationConfig(
+                response_mime_type=mime_type,
+            )
+
         if voice:
             logger.debug(
-                "Voice selection is not yet supported via the Gemini SDK. Voice '%s' will be applied only when falling back to HTTP.",
+                "Voice selection is currently unsupported via the Gemini SDK. Voice '%s' will be applied only when falling back to HTTP.",
                 voice,
             )
 
         try:
             response = self.tts_model.generate_content(
                 clean_text,
-                generation_config=genai_types.GenerationConfig(
-                    response_mime_type=mime_type,
-                ),
+                generation_config=generation_config_obj,
             )
             audio_bytes = self._extract_audio_from_response(response)
             if audio_bytes:
@@ -112,12 +126,7 @@ class GeminiClient:
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured; cannot call TTS endpoint")
 
-        endpoint = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.tts_model_name}:generateContent"
-        )
-
-        def perform_request(payload: dict[str, object]) -> bytes:
+        def perform_request(payload: dict[str, object], endpoint: str) -> bytes:
             request_data = json.dumps(payload).encode("utf-8")
             http_request = urllib_request.Request(
                 endpoint,
@@ -157,7 +166,7 @@ class GeminiClient:
                 raise RuntimeError("Gemini HTTP TTS response did not contain audio data")
             return audio_bytes_inner
 
-        base_payload: dict[str, object] = {
+        payload: dict[str, object] = {
             "contents": [
                 {
                     "role": "user",
@@ -167,25 +176,24 @@ class GeminiClient:
                         }
                     ],
                 }
-            ],
-            "generationConfig": {
-                "responseMimeType": mime_type,
-            },
+            ]
         }
 
-        if voice:
-            payload_with_voice = json.loads(json.dumps(base_payload))
-            payload_with_voice["generationConfig"]["voiceConfig"] = {"voiceName": voice}
-            try:
-                return perform_request(payload_with_voice)
-            except RuntimeError as exc:
-                logger.warning(
-                    "Gemini HTTP TTS request with voice '%s' failed (%s). Retrying without explicit voice.",
-                    voice,
-                    exc,
-                )
+        if mime_type and not mime_type.startswith("audio/"):
+            payload["generationConfig"] = {"responseMimeType": mime_type}
 
-        return perform_request(base_payload)
+        if voice:
+            logger.debug(
+                "Gemini HTTP TTS does not yet support explicit voice selection; requested voice '%s' will be ignored.",
+                voice,
+            )
+
+        endpoint = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.tts_model_name}:generateContent"
+        )
+
+        return perform_request(payload, endpoint)
 
     @staticmethod
     def _extract_audio_from_response(response: genai.types.GenerateContentResponse) -> bytes:
@@ -214,8 +222,16 @@ class GeminiClient:
 
     @staticmethod
     def _extract_audio_from_json(payload: dict[str, object]) -> bytes:
-        candidates = payload.get("candidates") if isinstance(payload, dict) else None
-        if not isinstance(candidates, list):
+        candidates: list | None = None
+        if isinstance(payload, dict):
+            primary = payload.get("candidates")
+            if isinstance(primary, list):
+                candidates = primary
+            else:
+                output = payload.get("output")
+                if isinstance(output, list):
+                    candidates = output
+        if not candidates:
             return b""
 
         for candidate in candidates:
