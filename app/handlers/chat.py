@@ -6,6 +6,7 @@ from aiogram.dispatcher.event.bases import SkipHandler
 
 from ..db import Database
 from ..gemini import GeminiClient
+from ..handlers.voice import send_voice_response
 from ..keyboards import GET_NEW_VERB_BUTTON, GET_VERB_NOW_BUTTON, SET_TIME_BUTTON
 from ..markdown import bold, escape
 from ..tts import TextToSpeechService
@@ -24,24 +25,14 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
         plain_text: str,
     ) -> None:
         await message.answer(markdown_text)
-        plain_value = (plain_text or "").strip()
-        if not plain_value:
-            return
-
-        try:
-            audio_bytes = await asyncio.to_thread(tts.synthesize, plain_value)
-        except Exception:
-            logger.exception("Failed to generate voice message for Gemini reply")
-            return
-
-        if not audio_bytes:
-            return
-
-        audio = types.BufferedInputFile(audio_bytes, filename="gemini-response.mp3")
-        try:
-            await message.answer_audio(audio)
-        except Exception:
-            logger.exception("Failed to send voice message for Gemini reply")
+        await send_voice_response(
+            message,
+            plain_text,
+            tts=tts,
+            logger=logger,
+            context="Gemini reply",
+            audio_filename="gemini-response.mp3",
+        )
 
     # Любой текст: если есть сегодняшнее задание — оцениваем; иначе обычный ответ
     async def on_text(message: types.Message) -> None:

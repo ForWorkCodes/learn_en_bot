@@ -6,6 +6,7 @@ from aiogram.filters import Command
 
 from ..db import Database
 from ..gemini import GeminiClient
+from ..handlers.voice import send_voice_response
 from ..keyboards import (
     GET_NEW_VERB_BUTTON,
     GET_VERB_NOW_BUTTON,
@@ -38,24 +39,14 @@ def setup(
         reply_markup: types.ReplyKeyboardMarkup | None = None,
     ) -> None:
         await message.answer(formatted.markdown, reply_markup=reply_markup)
-        plain_value = (formatted.plain or "").strip()
-        if not plain_value:
-            return
-
-        try:
-            audio_bytes = await asyncio.to_thread(tts.synthesize, plain_value)
-        except Exception:
-            logger.exception("Failed to generate voice message for assignment")
-            return
-
-        if not audio_bytes:
-            return
-
-        audio = types.BufferedInputFile(audio_bytes, filename="assignment.mp3")
-        try:
-            await message.answer_audio(audio)
-        except Exception:
-            logger.exception("Failed to send voice message for assignment")
+        await send_voice_response(
+            message,
+            formatted.plain,
+            tts=tts,
+            logger=logger,
+            context="assignment",
+            audio_filename="assignment.mp3",
+        )
 
     async def send_assignment(
         message: types.Message, *, force_new: bool, reminder_only: bool = False
