@@ -37,14 +37,15 @@ class GeminiClient:
         )
         return self.generate(prompt, fallback="Совет дня: выучи 3 новых слова и составь с ними предложения.")
 
-    def generate_phrasal_verb(self, user_hint: str | None = None) -> dict:
+    def generate_phrasal_verb(self) -> dict:
         prompt = (
             "Подбери один английский фразовый глагол для изучения сегодня. "
-            "Ответ дай строго в JSON с полями: verb (строка), translation (краткий перевод на русский), "
-            "explanation (короткое дружелюбное объяснение на русском), examples (массив из 2-3 коротких примеров на английском)."
+            "Ответ дай строго в JSON с полями: "
+            "verb (строка), translation (краткий перевод на русский), "
+            "explanation (короткое пояснение на русском без приветствий и обращений), "
+            "examples (массив из 2-3 объектов с полями text и translation, где text — предложение на английском, "
+            "а translation — краткий перевод на русский)."
         )
-        if user_hint:
-            prompt += f"\nУчти информацию о пользователе: {user_hint}."
         raw = self.generate(prompt)
         import json, re
         # Попытаться извлечь JSON из ответа
@@ -63,10 +64,16 @@ class GeminiClient:
             return {
                 "verb": "pick up",
                 "translation": "подобрать; выучить",
-                "explanation": "Часто значит усвоить что-то по ходу дела или поднять с земли.",
+                "explanation": "Этот фразовый глагол означает выучить что-то по ходу дела или поднять предмет.",
                 "examples": [
-                    "She picked up Spanish while living in Madrid.",
-                    "Please pick up the book from the floor.",
+                    {
+                        "text": "She picked up Spanish while living in Madrid.",
+                        "translation": "Она освоила испанский, пока жила в Мадриде.",
+                    },
+                    {
+                        "text": "Please pick up the book from the floor.",
+                        "translation": "Пожалуйста, подними книгу с пола.",
+                    },
                 ],
             }
 

@@ -12,6 +12,7 @@ from ..keyboards import (
     SET_TIME_BUTTON,
     main_menu_keyboard,
 )
+from ..markdown import escape
 from ..scheduler import LessonScheduler
 
 
@@ -37,11 +38,13 @@ def start_handler(db: Database):
     async def handler(message: types.Message) -> None:
         user = message.from_user
         if not user:
-            await message.answer("Здравствуйте!", reply_markup=main_menu_keyboard())
+            await message.answer(escape("Здравствуйте!"), reply_markup=main_menu_keyboard())
             return
         await asyncio.to_thread(db.add_or_get_user, chat_id=user.id, username=user.username)
         await message.answer(
-            "Привет! Я помогу в изучении английского. Выберите действие на клавиатуре.",
+            escape(
+                "Привет! Я помогу в изучении английского. Выберите действие на клавиатуре."
+            ),
             reply_markup=main_menu_keyboard(),
         )
 
@@ -56,12 +59,12 @@ def handle_set_time(db: Database, scheduler: LessonScheduler):
     async def handler(message: types.Message, state: FSMContext) -> None:
         user = message.from_user
         if not user:
-            await message.answer("Не удалось определить пользователя. Попробуйте позже.")
+            await message.answer(escape("Не удалось определить пользователя. Попробуйте позже."))
             return
         await asyncio.to_thread(db.add_or_get_user, chat_id=user.id, username=user.username)
         await state.set_state(TimeSettings.waiting_for_time)
         await message.answer(
-            "Введите время, когда отправлять глагол, в формате ЧЧ:ММ. Например: 09:30.",
+            escape("Введите время, когда отправлять глагол, в формате ЧЧ:ММ. Например: 09:30."),
             reply_markup=main_menu_keyboard(),
         )
 
@@ -75,25 +78,25 @@ def process_time_input(db: Database, scheduler: LessonScheduler):
         if text in {SET_TIME_BUTTON, GET_VERB_NOW_BUTTON, GET_NEW_VERB_BUTTON}:
             await state.clear()
             await message.answer(
-                "Настройку времени отменил. Выберите действие на клавиатуре.",
+                escape("Настройку времени отменил. Выберите действие на клавиатуре."),
                 reply_markup=main_menu_keyboard(),
             )
             return
 
         parts = text.split(":", maxsplit=1)
         if len(parts) != 2 or not all(part.isdigit() for part in parts):
-            await message.answer("Не получилось распознать время. Напишите, например, 08:30.")
+            await message.answer(escape("Не получилось распознать время. Напишите, например, 08:30."))
             return
 
         hour, minute = (int(parts[0]), int(parts[1]))
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            await message.answer("Часы должны быть от 00 до 23, минуты — от 00 до 59.")
+            await message.answer(escape("Часы должны быть от 00 до 23, минуты — от 00 до 59."))
             return
 
         user = message.from_user
         if not user:
             await state.clear()
-            await message.answer("Не удалось сохранить время. Попробуйте позже.")
+            await message.answer(escape("Не удалось сохранить время. Попробуйте позже."))
             return
 
         db_user = await asyncio.to_thread(
@@ -103,7 +106,7 @@ def process_time_input(db: Database, scheduler: LessonScheduler):
         await scheduler.reschedule_user(db_user.id)
         await state.clear()
         await message.answer(
-            f"Отлично! Буду присылать глагол каждый день в {hour:02d}:{minute:02d}.",
+            escape(f"Отлично! Буду присылать глагол каждый день в {hour:02d}:{minute:02d}."),
             reply_markup=main_menu_keyboard(),
         )
 

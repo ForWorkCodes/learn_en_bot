@@ -2,7 +2,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 
 SET_TIME_BUTTON = "Настроить время"
-GET_VERB_NOW_BUTTON = "Получить фразовый глагол"
+GET_VERB_NOW_BUTTON = "Напомнить фразовый глагол"
 GET_NEW_VERB_BUTTON = "Новый фразовый глагол"
 
 
