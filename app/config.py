@@ -14,6 +14,7 @@ class Settings:
     gemini_tts_voice: str
     gemini_tts_mime_type: str
     tts_prefer_gemini: bool
+    tts_strict_gemini: bool
     database_url: str
     schedule_cron: str
     tz: str
@@ -38,6 +39,7 @@ def load_settings() -> Settings:
         gemini_tts_voice=os.getenv("GEMINI_TTS_VOICE", "Puck"),
         gemini_tts_mime_type=os.getenv("GEMINI_TTS_MIME_TYPE", "audio/mp3"),
         tts_prefer_gemini=_to_bool(os.getenv("TTS_PREFER_GEMINI", "true"), default=True),
+        tts_strict_gemini=_to_bool(os.getenv("TTS_STRICT_GEMINI"), default=False),
         database_url=os.getenv("DATABASE_URL", "sqlite:///learn_en.db"),
         schedule_cron=os.getenv("SCHEDULE_CRON", "0 10 * * *"),
         tz=os.getenv("TZ", "UTC"),
