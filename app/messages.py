@@ -33,9 +33,15 @@ def format_assignment_message(*, verb: str, translation: str, explanation: str, 
     examples = list(_iter_examples(examples_raw))
     example_text, example_translation = (examples[0] if examples else ("", None))
 
+    explanation_value = explanation.strip()
+    if "\n" in explanation_value:
+        explanation_value = " ".join(
+            part.strip() for part in explanation_value.splitlines() if part.strip()
+        )
+
     parts: list[str] = [
         f"{bold('Фразовый глагол дня')}: {escape(verb)} — {escape(translation)}",
-        italic(explanation.strip()),
+        italic(explanation_value),
     ]
 
     if example_text:
