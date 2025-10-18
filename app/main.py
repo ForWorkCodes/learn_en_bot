@@ -15,7 +15,7 @@ from .handlers import start as start_module
 from .handlers import chat as chat_module
 from .handlers import lesson as lesson_module
 from .scheduler import setup_scheduler
-from .tts import TextToSpeechService
+from .tts import TextToSpeechService, GeminiTtsProvider
 
 
 def setup_logging() -> None:
@@ -50,10 +50,24 @@ async def main() -> None:
     db.init_db()
 
     # Gemini
-    gemini = GeminiClient(settings.gemini_api_key)
+    gemini = GeminiClient(
+        settings.gemini_api_key,
+        model=settings.gemini_model,
+        tts_model=settings.gemini_tts_model,
+    )
 
     # Text-to-Speech
-    tts = TextToSpeechService()
+    gemini_tts_provider = None
+    if gemini.supports_audio:
+        gemini_tts_provider = GeminiTtsProvider(
+            gemini,
+            voice=settings.gemini_tts_voice,
+            mime_type=settings.gemini_tts_mime_type,
+        )
+    tts = TextToSpeechService(
+        gemini_provider=gemini_tts_provider,
+        prefer_gemini=settings.tts_prefer_gemini,
+    )
 
     # Bot
     bot = Bot(
