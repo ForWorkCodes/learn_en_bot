@@ -2,9 +2,11 @@ import asyncio
 import logging
 
 from aiogram import Router, types
+from aiogram.dispatcher.event.bases import SkipHandler
 
 from ..db import Database
 from ..gemini import GeminiClient
+from ..keyboards import GET_NEW_VERB_BUTTON, GET_VERB_NOW_BUTTON, SET_TIME_BUTTON
 from ..markdown import bold, escape
 from ..tts import TextToSpeechService
 
@@ -46,6 +48,9 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
         text = (message.text or "").strip()
         if not text:
             return
+
+        if text in {SET_TIME_BUTTON, GET_VERB_NOW_BUTTON, GET_NEW_VERB_BUTTON}:
+            raise SkipHandler()
 
         tg_user = message.from_user
         assgn = None
