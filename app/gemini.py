@@ -8,7 +8,6 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import google.generativeai as genai
-from google.generativeai import types as genai_types
 
 
 logger = logging.getLogger("gemini")
@@ -80,18 +79,20 @@ class GeminiClient:
             logger.debug("Gemini SDK TTS model is unavailable; using direct HTTP request")
             return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
 
+        generation_config: dict[str, object] = {
+            "response_mime_type": mime_type,
+            "response_modalities": ["AUDIO"],
+        }
+
         if voice:
-            logger.debug(
-                "Voice selection is not yet supported via the Gemini SDK. Voice '%s' will be applied only when falling back to HTTP.",
-                voice,
-            )
+            generation_config["speech_config"] = {
+                "voice_config": {"voice_name": voice}
+            }
 
         try:
             response = self.tts_model.generate_content(
                 clean_text,
-                generation_config=genai_types.GenerationConfig(
-                    response_mime_type=mime_type,
-                ),
+                generation_config=generation_config,
             )
             audio_bytes = self._extract_audio_from_response(response)
             if audio_bytes:
@@ -112,12 +113,7 @@ class GeminiClient:
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured; cannot call TTS endpoint")
 
-        endpoint = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.tts_model_name}:generateContent"
-        )
-
-        def perform_request(payload: dict[str, object]) -> bytes:
+        def perform_request(payload: dict[str, object], endpoint: str) -> bytes:
             request_data = json.dumps(payload).encode("utf-8")
             http_request = urllib_request.Request(
                 endpoint,
@@ -170,22 +166,65 @@ class GeminiClient:
             ],
             "generationConfig": {
                 "responseMimeType": mime_type,
+                "responseModalities": ["AUDIO"],
             },
         }
 
-        if voice:
-            payload_with_voice = json.loads(json.dumps(base_payload))
-            payload_with_voice["generationConfig"]["voiceConfig"] = {"voiceName": voice}
-            try:
-                return perform_request(payload_with_voice)
-            except RuntimeError as exc:
-                logger.warning(
-                    "Gemini HTTP TTS request with voice '%s' failed (%s). Retrying without explicit voice.",
-                    voice,
-                    exc,
-                )
+        endpoints: list[tuple[str, dict[str, object], str]] = []
 
-        return perform_request(base_payload)
+        # Primary endpoint: Responses API (newer surface that allows audio + voices).
+        responses_payload = json.loads(json.dumps(base_payload))
+        responses_payload["model"] = f"models/{self.tts_model_name}"
+        if voice:
+            speech_config = responses_payload.setdefault("speechConfig", {})
+            speech_config["voiceConfig"] = {"voiceName": voice}
+        endpoints.append(
+            (
+                "https://generativelanguage.googleapis.com/v1beta/responses:generate",
+                responses_payload,
+                "Responses API",
+            )
+        )
+
+        # Legacy endpoint: generateContent. Remove fields unsupported by the legacy schema.
+        legacy_payload = json.loads(json.dumps(base_payload))
+        legacy_generation_cfg = legacy_payload.get("generationConfig", {})
+        legacy_generation_cfg.pop("responseModalities", None)
+        if voice:
+            generation_config = legacy_payload.setdefault("generationConfig", {})
+            audio_config = generation_config.setdefault("audioConfig", {})
+            audio_config["voiceConfig"] = {"voiceName": voice}
+        legacy_endpoint = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.tts_model_name}:generateContent"
+        )
+        endpoints.append((legacy_endpoint, legacy_payload, "generateContent"))
+
+        last_error: Optional[Exception] = None
+        for endpoint, payload, label in endpoints:
+            try:
+                return perform_request(payload, endpoint)
+            except RuntimeError as exc:
+                last_error = exc
+                logger.warning(
+                    "%s TTS request failed (%s).", label, exc
+                )
+                if voice and label == "generateContent":
+                    logger.warning("Retrying legacy endpoint without explicit voice configuration.")
+                    stripped_payload = json.loads(json.dumps(legacy_payload))
+                    stripped_generation = stripped_payload.get("generationConfig", {})
+                    if "audioConfig" in stripped_generation:
+                        stripped_generation.pop("audioConfig", None)
+                    try:
+                        return perform_request(stripped_payload, endpoint)
+                    except RuntimeError as exc_inner:
+                        last_error = exc_inner
+                        logger.warning(
+                            "Legacy generateContent TTS without voice still failed (%s).",
+                            exc_inner,
+                        )
+
+        raise RuntimeError("Gemini HTTP TTS request failed") if last_error is None else last_error
 
     @staticmethod
     def _extract_audio_from_response(response: genai.types.GenerateContentResponse) -> bytes:
@@ -214,8 +253,16 @@ class GeminiClient:
 
     @staticmethod
     def _extract_audio_from_json(payload: dict[str, object]) -> bytes:
-        candidates = payload.get("candidates") if isinstance(payload, dict) else None
-        if not isinstance(candidates, list):
+        candidates: list | None = None
+        if isinstance(payload, dict):
+            primary = payload.get("candidates")
+            if isinstance(primary, list):
+                candidates = primary
+            else:
+                output = payload.get("output")
+                if isinstance(output, list):
+                    candidates = output
+        if not candidates:
             return b""
 
         for candidate in candidates:
