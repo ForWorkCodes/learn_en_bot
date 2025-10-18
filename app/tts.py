@@ -4,15 +4,45 @@ import asyncio
 import logging
 import re
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Sequence, TYPE_CHECKING
 
 import edge_tts
 from gtts import gTTS
 
 
+if TYPE_CHECKING:
+    from .gemini import GeminiClient
+
+
 logger = logging.getLogger("learn_en_bot.tts")
 
 _CYRILLIC_PATTERN = re.compile(r"[\u0400-\u04FF]")
+
+
+class GeminiTtsProvider:
+    """Adapter around GeminiClient to synthesize high-quality speech."""
+
+    def __init__(
+        self,
+        client: "GeminiClient",
+        *,
+        voice: Optional[str] = None,
+        mime_type: str = "audio/mp3",
+        languages: Sequence[str] = ("en",),
+    ) -> None:
+        self._client = client
+        self.voice = voice
+        self.mime_type = mime_type
+        self._languages = tuple(lang.lower() for lang in languages if lang)
+
+    def supports_language(self, language: str) -> bool:
+        normalized = (language or "").lower()
+        return any(normalized.startswith(prefix) for prefix in self._languages)
+
+    def synthesize(self, text: str, *, language: str) -> bytes:
+        if not self.supports_language(language):
+            raise ValueError(f"Language '{language}' is not supported by Gemini TTS provider")
+        return self._client.synthesize_audio(text, voice=self.voice, mime_type=self.mime_type)
 
 
 class TextToSpeechService:
@@ -24,11 +54,15 @@ class TextToSpeechService:
         slow: bool = False,
         english_voice: str = "en-US-AriaNeural",
         english_rate: str = "+0%",
+        gemini_provider: Optional[GeminiTtsProvider] = None,
+        prefer_gemini: bool = True,
     ) -> None:
         self.default_language = default_language
         self.slow = slow
         self.english_voice = english_voice
         self.english_rate = english_rate
+        self.gemini_provider = gemini_provider
+        self.prefer_gemini = prefer_gemini
 
     def synthesize(self, text: str, *, language: Optional[str] = None) -> bytes:
         clean_text = (text or "").strip()
@@ -36,6 +70,12 @@ class TextToSpeechService:
             raise ValueError("Cannot synthesize empty text")
 
         lang = (language or self._detect_language(clean_text)).lower()
+
+        if self._should_use_gemini(lang):
+            try:
+                return self._synthesize_gemini(clean_text, lang)
+            except Exception:
+                logger.exception("Gemini TTS failed for language %s; falling back to other providers", lang)
 
         if self._should_use_edge(lang):
             try:
@@ -54,8 +94,18 @@ class TextToSpeechService:
             return "ru"
         return self.default_language or "en"
 
+    def _should_use_gemini(self, language: str) -> bool:
+        if not self.prefer_gemini or not self.gemini_provider:
+            return False
+        return self.gemini_provider.supports_language(language)
+
     def _should_use_edge(self, language: str) -> bool:
         return language.startswith("en")
+
+    def _synthesize_gemini(self, text: str, language: str) -> bytes:
+        if not self.gemini_provider:
+            raise RuntimeError("Gemini provider is not configured")
+        return self.gemini_provider.synthesize(text, language=language)
 
     def _synthesize_gtts(self, text: str, language: str) -> bytes:
         tts = gTTS(text=text, lang=language, slow=self.slow)
