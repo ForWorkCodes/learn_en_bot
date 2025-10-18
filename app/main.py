@@ -54,7 +54,7 @@ async def main() -> None:
     # Bot
     bot = Bot(
         token=settings.telegram_bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
     )
     dp = Dispatcher()
 
@@ -80,7 +80,7 @@ async def main() -> None:
         from aiogram.types import BotCommand
         await bot.set_my_commands([
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="lesson", description="Получить фразовый глагол"),
+            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
         ])
     except Exception:
         logger.warning("Failed to set bot commands", exc_info=True)
@@ -90,7 +90,7 @@ async def main() -> None:
         from aiogram.types import BotCommand
         await bot.set_my_commands([
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="lesson", description="Получить фразовый глагол"),
+            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
         ])
     except Exception:
         logger.warning("Failed to override bot commands", exc_info=True)

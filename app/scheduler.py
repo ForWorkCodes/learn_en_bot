@@ -14,6 +14,7 @@ from apscheduler.triggers.date import DateTrigger
 from .db import Database
 from .gemini import GeminiClient
 from .keyboards import main_menu_keyboard
+from .markdown import bold, escape
 from .messages import format_assignment_message
 from .services.assignments import ensure_daily_assignment
 
@@ -193,8 +194,8 @@ class LessonScheduler:
             return
 
         reminder = (
-            f"<b>Напоминание:</b> вернись к фразовому глаголу \"{assignment.phrasal_verb}\"."
-            " Составь ещё одно короткое предложение — я подскажу, всё ли верно."
+            f"{bold('Напоминание')}: {escape('вернись к фразовому глаголу')} «{escape(assignment.phrasal_verb)}». "
+            f"{escape('Составь ещё одно короткое предложение — я подскажу, всё ли верно.')}"
         )
 
         try:

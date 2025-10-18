@@ -11,6 +11,7 @@ from ..keyboards import (
     GET_VERB_NOW_BUTTON,
     main_menu_keyboard,
 )
+from ..markdown import escape
 from ..scheduler import LessonScheduler
 from ..services.assignments import ensure_daily_assignment
 
@@ -25,7 +26,7 @@ def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: Lesson
     async def send_assignment(message: types.Message, *, force_new: bool) -> None:
         user = message.from_user
         if not user:
-            await message.answer("Попробуйте ещё раз")
+            await message.answer(escape("Попробуйте ещё раз"))
             return
 
         db_user = await asyncio.to_thread(
