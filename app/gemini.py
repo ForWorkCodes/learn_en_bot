@@ -66,15 +66,23 @@ class GeminiClient:
         if not self.tts_model:
             raise RuntimeError("Gemini TTS model is not configured")
 
-        generation_config = genai.types.GenerationConfig(response_mime_type=mime_type)
+        request_kwargs: dict[str, object] = {"response_mime_type": mime_type}
         if voice:
-            # Новые модели принимают параметр audio_voice; он будет проигнорирован, если не поддерживается.
-            setattr(generation_config, "audio_voice", voice)
+            request_kwargs["speech_config"] = {"voice": voice}
 
         try:
             response = self.tts_model.generate_content(
                 clean_text,
-                generation_config=generation_config,
+                **request_kwargs,
+            )
+        except TypeError:
+            logger.debug(
+                "Gemini TTS model rejected audio kwargs; falling back to generation_config",
+                exc_info=True,
+            )
+            response = self.tts_model.generate_content(
+                clean_text,
+                generation_config={"response_mime_type": mime_type},
             )
         except Exception as exc:
             logger.exception("Gemini TTS request failed: %s", exc)
