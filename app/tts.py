@@ -23,7 +23,7 @@ class GeminiTtsProvider:
         *,
         voice: Optional[str] = None,
         mime_type: str = "audio/mp3",
-        languages: Sequence[str] = ("en",),
+        languages: Sequence[str] = ("en", "ru"),
     ) -> None:
         self._client = client
         self.voice = voice

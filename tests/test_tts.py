@@ -36,6 +36,14 @@ class TextToSpeechServiceTests(unittest.TestCase):
 
         self.assertEqual(result, b"gemini-audio")
 
+    def test_default_provider_supports_russian(self) -> None:
+        provider = GeminiTtsProvider(_StubGeminiClient(b"gemini-audio"))
+        service = TextToSpeechService(gemini_provider=provider)
+
+        result = service.synthesize("Привет")
+
+        self.assertEqual(result, b"gemini-audio")
+
     def test_missing_provider_raises_runtime_error(self) -> None:
         service = TextToSpeechService(gemini_provider=None)
 
