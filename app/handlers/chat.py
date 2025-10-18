@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Router, types
-from aiogram.exceptions import SkipHandler
+from aiogram.dispatcher.event.bases import SkipHandler
 
 from ..db import Database
 from ..gemini import GeminiClient
