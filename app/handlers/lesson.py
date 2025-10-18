@@ -12,9 +12,10 @@ from ..keyboards import (
     main_menu_keyboard,
 )
 from ..markdown import escape
-from ..messages import format_assignment_reminder
+from ..messages import FormattedMessage, format_assignment_reminder
 from ..scheduler import LessonScheduler
 from ..services.assignments import ensure_daily_assignment
+from ..tts import TextToSpeechService
 
 
 logger = logging.getLogger("learn_en_bot.lesson")
@@ -23,7 +24,39 @@ logger = logging.getLogger("learn_en_bot.lesson")
 router = Router(name=__name__)
 
 
-def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: LessonScheduler) -> None:
+def setup(
+    router_: Router,
+    db: Database,
+    gemini: GeminiClient,
+    scheduler: LessonScheduler,
+    tts: TextToSpeechService,
+) -> None:
+    async def _send_formatted_message(
+        message: types.Message,
+        formatted: FormattedMessage,
+        *,
+        reply_markup: types.ReplyKeyboardMarkup | None = None,
+    ) -> None:
+        await message.answer(formatted.markdown, reply_markup=reply_markup)
+        plain_value = (formatted.plain or "").strip()
+        if not plain_value:
+            return
+
+        try:
+            audio_bytes = await asyncio.to_thread(tts.synthesize, plain_value)
+        except Exception:
+            logger.exception("Failed to generate voice message for assignment")
+            return
+
+        if not audio_bytes:
+            return
+
+        audio = types.BufferedInputFile(audio_bytes, filename="assignment.mp3")
+        try:
+            await message.answer_audio(audio)
+        except Exception:
+            logger.exception("Failed to send voice message for assignment")
+
     async def send_assignment(
         message: types.Message, *, force_new: bool, reminder_only: bool = False
     ) -> None:
@@ -37,18 +70,22 @@ def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: Lesson
         )
 
         if reminder_only and not force_new:
-            existing_assignment = await asyncio.to_thread(
-                db.get_today_assignment, db_user.id
+            latest_assignment = await asyncio.to_thread(
+                db.get_latest_assignment, db_user.id
             )
-            if existing_assignment:
+            if latest_assignment:
                 text = format_assignment_reminder(
-                    verb=existing_assignment.phrasal_verb,
-                    translation=existing_assignment.translation,
-                    explanation=existing_assignment.explanation,
-                    examples_json=existing_assignment.examples_json,
+                    verb=latest_assignment.phrasal_verb,
+                    translation=latest_assignment.translation,
+                    explanation=latest_assignment.explanation,
+                    examples_json=latest_assignment.examples_json,
                 )
                 try:
-                    await message.answer(text, reply_markup=main_menu_keyboard())
+                    await _send_formatted_message(
+                        message,
+                        text,
+                        reply_markup=main_menu_keyboard(),
+                    )
                 except Exception:
                     chat = getattr(message, "chat", None)
                     chat_id = getattr(chat, "id", None)
@@ -58,7 +95,7 @@ def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: Lesson
                     return
 
                 await asyncio.to_thread(
-                    db.mark_assignment_delivered, existing_assignment.id
+                    db.mark_assignment_delivered, latest_assignment.id
                 )
                 return
 
@@ -67,7 +104,11 @@ def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: Lesson
         )
 
         try:
-            await message.answer(text, reply_markup=main_menu_keyboard())
+            await _send_formatted_message(
+                message,
+                text,
+                reply_markup=main_menu_keyboard(),
+            )
         except Exception:
             chat = getattr(message, "chat", None)
             chat_id = getattr(chat, "id", None)

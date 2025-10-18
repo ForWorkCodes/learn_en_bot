@@ -6,7 +6,7 @@ from typing import Tuple
 
 from ..db import Database
 from ..gemini import GeminiClient
-from ..messages import format_assignment_message
+from ..messages import FormattedMessage, format_assignment_message
 from ..models import Assignment, User
 
 
@@ -16,7 +16,7 @@ async def ensure_daily_assignment(
     user: User,
     *,
     force_new: bool = False,
-) -> Tuple[Assignment, str, bool]:
+) -> Tuple[Assignment, FormattedMessage, bool]:
     existing = await asyncio.to_thread(db.get_today_assignment, user.id)
     if existing and not force_new:
         message = format_assignment_message(

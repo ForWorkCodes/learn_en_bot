@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .markdown import bold, escape, italic
+
+
+@dataclass(frozen=True)
+class FormattedMessage:
+    markdown: str
+    plain: str
 
 
 def _iter_examples(raw: Iterable[Any]) -> Iterable[tuple[str, str | None]]:
@@ -44,59 +51,86 @@ def _prepare_assignment_details(
     return explanation_value, example_text, example_translation
 
 
-def format_assignment_message(*, verb: str, translation: str, explanation: str, examples_json: str) -> str:
+def format_assignment_message(
+    *, verb: str, translation: str, explanation: str, examples_json: str
+) -> FormattedMessage:
     explanation_value, example_text, example_translation = _prepare_assignment_details(
         explanation=explanation, examples_json=examples_json
     )
 
-    parts: list[str] = [
+    markdown_parts: list[str] = [
         f"{bold('Фразовый глагол дня')}: {escape(verb)} — {escape(translation)}",
         italic(explanation_value),
     ]
+    plain_parts: list[str] = [
+        f"Фразовый глагол дня: {verb} — {translation}",
+        explanation_value,
+    ]
 
     if example_text:
-        parts.append(f"{bold('Пример')}: {escape(example_text)}")
+        markdown_parts.append(f"{bold('Пример')}: {escape(example_text)}")
+        plain_parts.append(f"Пример: {example_text}")
         translation_value = (
             example_translation
             or "Попробуй перевести это предложение самостоятельно."
         )
-        parts.append(f"{bold('Перевод')}: {escape(translation_value)}")
+        markdown_parts.append(f"{bold('Перевод')}: {escape(translation_value)}")
+        plain_parts.append(f"Перевод: {translation_value}")
     else:
-        parts.append(
+        markdown_parts.append(
             f"{bold('Пример')}: {escape('Попробуй составить короткое предложение с этим глаголом.')}"
         )
-        parts.append(
+        plain_parts.append(
+            "Пример: Попробуй составить короткое предложение с этим глаголом."
+        )
+        markdown_parts.append(
             f"{bold('Перевод')}: {escape('Затем переведи его на русский язык самостоятельно.')}"
         )
+        plain_parts.append(
+            "Перевод: Затем переведи его на русский язык самостоятельно."
+        )
 
-    parts.append(escape("Напиши своё короткое предложение — я подскажу, всё ли верно."))
-    return "\n\n".join(parts)
+    markdown_parts.append(escape("Напиши своё короткое предложение — я подскажу, всё ли верно."))
+    plain_parts.append("Напиши своё короткое предложение — я подскажу, всё ли верно.")
+    return FormattedMessage("\n\n".join(markdown_parts), "\n\n".join(plain_parts))
 
 
 def format_assignment_reminder(
     *, verb: str, translation: str, explanation: str, examples_json: str
-) -> str:
+) -> FormattedMessage:
     explanation_value, example_text, example_translation = _prepare_assignment_details(
         explanation=explanation, examples_json=examples_json
     )
 
-    parts: list[str] = [
+    markdown_parts: list[str] = [
         f"{bold('Фразовый глагол дня')}: {escape(verb)} — {escape(translation)}",
         f"{bold('Объяснение')}: {escape(explanation_value)}",
     ]
+    plain_parts: list[str] = [
+        f"Фразовый глагол дня: {verb} — {translation}",
+        f"Объяснение: {explanation_value}",
+    ]
 
     if example_text:
-        parts.append(f"{bold('Пример')}: {escape(example_text)}")
+        markdown_parts.append(f"{bold('Пример')}: {escape(example_text)}")
+        plain_parts.append(f"Пример: {example_text}")
         if example_translation:
-            parts.append(f"{bold('Перевод')}: {escape(example_translation)}")
+            markdown_parts.append(f"{bold('Перевод')}: {escape(example_translation)}")
+            plain_parts.append(f"Перевод: {example_translation}")
         else:
-            parts.append(
+            markdown_parts.append(
                 f"{bold('Перевод')}: {escape('Попробуй перевести это предложение самостоятельно.')}"
             )
+            plain_parts.append(
+                "Перевод: Попробуй перевести это предложение самостоятельно."
+            )
     else:
-        parts.append(
+        markdown_parts.append(
             f"{bold('Пример')}: {escape('Попробуй составить короткое предложение с этим глаголом.')}"
         )
+        plain_parts.append(
+            "Пример: Попробуй составить короткое предложение с этим глаголом."
+        )
 
-    return "\n\n".join(parts)
+    return FormattedMessage("\n\n".join(markdown_parts), "\n\n".join(plain_parts))
 

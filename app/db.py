@@ -94,6 +94,15 @@ class Database:
                 select(Assignment).where(Assignment.user_id == user_id, Assignment.date_assigned == date.today())
             )
 
+    def get_latest_assignment(self, user_id: int) -> Optional[Assignment]:
+        with self.session() as db:
+            stmt = (
+                select(Assignment)
+                .where(Assignment.user_id == user_id)
+                .order_by(Assignment.date_assigned.desc(), Assignment.created_at.desc())
+            )
+            return db.scalars(stmt).first()
+
     def get_today_assignment_by_chat(self, chat_id: int) -> Optional[Assignment]:
         with self.session() as db:
             user = db.scalar(select(User).where(User.chat_id == chat_id))

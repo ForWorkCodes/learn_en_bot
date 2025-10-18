@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 import pytz
 from aiogram import Bot
+from aiogram.types import BufferedInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -15,8 +16,9 @@ from .db import Database
 from .gemini import GeminiClient
 from .keyboards import main_menu_keyboard
 from .markdown import bold, escape
-from .messages import format_assignment_message
+from .messages import FormattedMessage, format_assignment_message
 from .services.assignments import ensure_daily_assignment
+from .tts import TextToSpeechService
 
 
 class LessonScheduler:
@@ -25,6 +27,7 @@ class LessonScheduler:
         bot: Bot,
         db: Database,
         gemini: GeminiClient,
+        tts: TextToSpeechService,
         *,
         default_cron: str,
         timezone: str,
@@ -32,6 +35,7 @@ class LessonScheduler:
         self.bot = bot
         self.db = db
         self.gemini = gemini
+        self.tts = tts
         self.default_cron = default_cron
         self.timezone = pytz.timezone(timezone)
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
@@ -165,13 +169,15 @@ class LessonScheduler:
         try:
             await self.bot.send_message(
                 chat_id=user.chat_id,
-                text=text,
+                text=text.markdown,
                 reply_markup=main_menu_keyboard(),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
+
+        await self._send_voice_message(user.chat_id, text)
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -268,13 +274,15 @@ class LessonScheduler:
         try:
             await self.bot.send_message(
                 chat_id=user.chat_id,
-                text=text,
+                text=text.markdown,
                 reply_markup=main_menu_keyboard(),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
+
+        await self._send_voice_message(user.chat_id, text)
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -284,13 +292,35 @@ class LessonScheduler:
             self.plan_followups(user.id, assignment.id)
 
 
+    async def _send_voice_message(self, chat_id: int, formatted: FormattedMessage) -> None:
+        plain_value = (formatted.plain or "").strip()
+        if not plain_value:
+            return
+
+        try:
+            audio_bytes = await asyncio.to_thread(self.tts.synthesize, plain_value)
+        except Exception:
+            self.logger.exception("Failed to generate voice message for chat %s", chat_id)
+            return
+
+        if not audio_bytes:
+            return
+
+        audio = BufferedInputFile(audio_bytes, filename="assignment.mp3")
+        try:
+            await self.bot.send_audio(chat_id=chat_id, audio=audio)
+        except Exception:
+            self.logger.exception("Failed to send voice message to chat %s", chat_id)
+
+
 async def setup_scheduler(
     bot: Bot,
     db: Database,
     gemini: GeminiClient,
+    tts: TextToSpeechService,
     cron: str,
     tz: str,
 ) -> LessonScheduler:
-    scheduler = LessonScheduler(bot, db, gemini, default_cron=cron, timezone=tz)
+    scheduler = LessonScheduler(bot, db, gemini, tts, default_cron=cron, timezone=tz)
     await scheduler.initialize()
     return scheduler
