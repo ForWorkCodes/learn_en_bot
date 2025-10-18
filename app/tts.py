@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from io import BytesIO
 from typing import Optional, Sequence, TYPE_CHECKING
-
-import edge_tts
-from gtts import gTTS
 
 
 if TYPE_CHECKING:
@@ -28,7 +23,7 @@ class GeminiTtsProvider:
         *,
         voice: Optional[str] = None,
         mime_type: str = "audio/mp3",
-        languages: Sequence[str] = ("en",),
+        languages: Sequence[str] = ("en", "ru"),
     ) -> None:
         self._client = client
         self.voice = voice
@@ -46,25 +41,16 @@ class GeminiTtsProvider:
 
 
 class TextToSpeechService:
-    """Convert short text responses into audio clips."""
+    """Convert short text responses into audio clips using Gemini only."""
 
     def __init__(
         self,
-        default_language: str = "en",
-        slow: bool = False,
-        english_voice: str = "en-US-AriaNeural",
-        english_rate: str = "+0%",
+        *,
         gemini_provider: Optional[GeminiTtsProvider] = None,
-        prefer_gemini: bool = True,
-        strict_gemini: bool = False,
+        default_language: str = "en",
     ) -> None:
-        self.default_language = default_language
-        self.slow = slow
-        self.english_voice = english_voice
-        self.english_rate = english_rate
         self.gemini_provider = gemini_provider
-        self.prefer_gemini = prefer_gemini
-        self.strict_gemini = strict_gemini
+        self.default_language = default_language
 
     def synthesize(self, text: str, *, language: Optional[str] = None) -> bytes:
         clean_text = (text or "").strip()
@@ -73,94 +59,22 @@ class TextToSpeechService:
 
         lang = (language or self._detect_language(clean_text)).lower()
 
-        if self.strict_gemini:
-            if not self.gemini_provider:
-                logger.error("Gemini TTS strict mode is enabled, but no provider is configured")
-                return b""
-            if not self.gemini_provider.supports_language(lang):
-                logger.error(
-                    "Gemini TTS strict mode is enabled, but language %s is not supported", lang
-                )
-                return b""
-            try:
-                return self._synthesize_gemini(clean_text, lang)
-            except Exception:
-                logger.exception("Gemini TTS failed in strict mode for language %s", lang)
-                return b""
+        if not self.gemini_provider:
+            logger.error("Gemini TTS provider is not configured")
+            raise RuntimeError("Gemini TTS provider is not configured")
 
-        if self._should_use_gemini(lang):
-            try:
-                return self._synthesize_gemini(clean_text, lang)
-            except Exception:
-                logger.exception("Gemini TTS failed for language %s; falling back to other providers", lang)
+        if not self.gemini_provider.supports_language(lang):
+            logger.error("Gemini TTS provider does not support language %s", lang)
+            raise ValueError(f"Language '{lang}' is not supported by Gemini TTS provider")
 
-        if self._should_use_edge(lang):
-            try:
-                return self._synthesize_edge(clean_text, lang)
-            except Exception:
-                logger.exception("Edge TTS failed for language %s; falling back to gTTS", lang)
-
-        try:
-            return self._synthesize_gtts(clean_text, lang)
-        except Exception:
-            logger.exception("Failed to synthesize speech for language %s", lang)
-            raise
+        return self._synthesize_gemini(clean_text, lang)
 
     def _detect_language(self, text: str) -> str:
         if _CYRILLIC_PATTERN.search(text):
             return "ru"
         return self.default_language or "en"
 
-    def _should_use_gemini(self, language: str) -> bool:
-        if not self.prefer_gemini or not self.gemini_provider:
-            return False
-        return self.gemini_provider.supports_language(language)
-
-    def _should_use_edge(self, language: str) -> bool:
-        return language.startswith("en")
-
     def _synthesize_gemini(self, text: str, language: str) -> bytes:
         if not self.gemini_provider:
             raise RuntimeError("Gemini provider is not configured")
         return self.gemini_provider.synthesize(text, language=language)
-
-    def _synthesize_gtts(self, text: str, language: str) -> bytes:
-        tts = gTTS(text=text, lang=language, slow=self.slow)
-        buffer = BytesIO()
-        tts.write_to_fp(buffer)
-        return buffer.getvalue()
-
-    def _synthesize_edge(self, text: str, language: str) -> bytes:
-        voice = self._resolve_edge_voice(language)
-        logger.debug("Synthesizing speech via Edge TTS using voice %s", voice)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self._stream_edge_audio(text, voice=voice, rate=self.english_rate))
-
-        new_loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(new_loop)
-            return new_loop.run_until_complete(
-                self._stream_edge_audio(text, voice=voice, rate=self.english_rate)
-            )
-        finally:
-            new_loop.close()
-            asyncio.set_event_loop(None)
-
-    async def _stream_edge_audio(self, text: str, voice: str, rate: str) -> bytes:
-        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-        audio_stream = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_stream.extend(chunk["data"])
-        if not audio_stream:
-            raise RuntimeError("Edge TTS produced no audio data")
-        return bytes(audio_stream)
-
-    def _resolve_edge_voice(self, language: str) -> str:
-        if language.startswith("en-gb"):
-            return "en-GB-LibbyNeural"
-        if language.startswith("en-au"):
-            return "en-AU-NatashaNeural"
-        return self.english_voice
