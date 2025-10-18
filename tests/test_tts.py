@@ -8,6 +8,7 @@ import unittest
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.gemini import GeminiClient
+from google.generativeai import types as genai_types
 from app.tts import GeminiTtsProvider, TextToSpeechService
 
 
@@ -97,8 +98,13 @@ class GeminiClientAudioTests(unittest.TestCase):
         self.assertEqual(len(model.calls), 1)
         args, kwargs = model.calls[0]
         self.assertEqual(args, ("Hello",))
-        self.assertEqual(kwargs["response_mime_type"], "audio/ogg")
-        self.assertEqual(kwargs["speech_config"], {"voice": "Puck"})
+        self.assertIn("generation_config", kwargs)
+        config = kwargs["generation_config"]
+        if isinstance(config, genai_types.GenerationConfig):
+            self.assertEqual(config.response_mime_type, "audio/ogg")
+        else:
+            self.assertEqual(config.get("response_mime_type"), "audio/ogg")
+        self.assertNotIn("speech_config", kwargs)
 
     def test_synthesize_audio_decodes_base64_payload(self) -> None:
         payload = base64.b64encode(b"audio-stream").decode("ascii")
@@ -110,7 +116,12 @@ class GeminiClientAudioTests(unittest.TestCase):
 
         self.assertEqual(result, b"audio-stream")
         _, kwargs = model.calls[0]
-        self.assertNotIn("speech_config", kwargs)
+        self.assertIn("generation_config", kwargs)
+        config = kwargs["generation_config"]
+        if isinstance(config, genai_types.GenerationConfig):
+            self.assertEqual(config.response_mime_type, "audio/mp3")
+        else:
+            self.assertEqual(config.get("response_mime_type"), "audio/mp3")
 
 
 if __name__ == "__main__":

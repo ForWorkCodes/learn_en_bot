@@ -19,7 +19,7 @@ class GeminiClient:
         self,
         api_key: str,
         model: str = "gemini-2.5-flash",
-        tts_model: str = "gemini-2.5-flash-tts",
+        tts_model: str = "gemini-2.5-flash-preview-tts",
         *,
         tts_timeout: float = 30.0,
     ) -> None:
@@ -40,7 +40,7 @@ class GeminiClient:
                 self.tts_model = genai.GenerativeModel(self.tts_model_name) if tts_model else None
             except Exception:
                 logger.warning(
-                    "Failed to initialize Gemini TTS model '%s'. Audio synthesis will be disabled.",
+                    "Failed to initialize Gemini TTS model '%s'. Audio synthesis will fallback to direct HTTP requests.",
                     self.tts_model_name,
                     exc_info=True,
                 )
@@ -64,7 +64,7 @@ class GeminiClient:
 
     @property
     def supports_audio(self) -> bool:
-        return bool(self.tts_model)
+        return bool(self.tts_model or (self.api_key and self.tts_model_name))
 
     def synthesize_audio(
         self,
@@ -80,13 +80,18 @@ class GeminiClient:
             logger.debug("Gemini SDK TTS model is unavailable; using direct HTTP request")
             return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
 
+        if voice:
+            logger.debug(
+                "Voice selection is not yet supported via the Gemini SDK. Voice '%s' will be applied only when falling back to HTTP.",
+                voice,
+            )
+
         try:
             response = self.tts_model.generate_content(
                 clean_text,
                 generation_config=genai_types.GenerationConfig(
                     response_mime_type=mime_type,
                 ),
-                request_options=self._build_speech_request_options(voice),
             )
             audio_bytes = self._extract_audio_from_response(response)
             if audio_bytes:
@@ -96,11 +101,6 @@ class GeminiClient:
             logger.exception("Gemini SDK TTS synthesis failed; retrying over HTTP")
 
         return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
-
-    def _build_speech_request_options(self, voice: Optional[str]) -> dict[str, object]:
-        if not voice:
-            return {}
-        return {"speech_config": {"voice": voice}}
 
     def _synthesize_audio_via_http(
         self,
@@ -112,7 +112,52 @@ class GeminiClient:
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured; cannot call TTS endpoint")
 
-        payload: dict[str, object] = {
+        endpoint = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.tts_model_name}:generateContent"
+        )
+
+        def perform_request(payload: dict[str, object]) -> bytes:
+            request_data = json.dumps(payload).encode("utf-8")
+            http_request = urllib_request.Request(
+                endpoint,
+                data=request_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
+            )
+
+            try:
+                with urllib_request.urlopen(http_request, timeout=self._tts_timeout) as response:
+                    raw_body = response.read()
+            except urllib_error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="ignore")
+                logger.error(
+                    "Gemini HTTP TTS request failed with status %s: %s",
+                    exc.code,
+                    error_body,
+                )
+                raise RuntimeError(
+                    f"Gemini HTTP TTS request failed with status {exc.code}: {error_body}"
+                ) from exc
+            except urllib_error.URLError as exc:
+                logger.error("Gemini HTTP TTS request failed: %s", exc)
+                raise RuntimeError("Gemini HTTP TTS request failed") from exc
+
+            try:
+                response_payload = json.loads(raw_body.decode("utf-8"))
+            except json.JSONDecodeError as exc:
+                logger.error("Failed to decode Gemini HTTP TTS response: %s", exc)
+                raise RuntimeError("Gemini HTTP TTS response was not valid JSON") from exc
+
+            audio_bytes_inner = self._extract_audio_from_json(response_payload)
+            if not audio_bytes_inner:
+                logger.error("Gemini HTTP TTS response did not contain audio data")
+                raise RuntimeError("Gemini HTTP TTS response did not contain audio data")
+            return audio_bytes_inner
+
+        base_payload: dict[str, object] = {
             "contents": [
                 {
                     "role": "user",
@@ -127,49 +172,20 @@ class GeminiClient:
                 "responseMimeType": mime_type,
             },
         }
+
         if voice:
-            payload["speechConfig"] = {"voice": voice}
+            payload_with_voice = json.loads(json.dumps(base_payload))
+            payload_with_voice["generationConfig"]["voiceConfig"] = {"voiceName": voice}
+            try:
+                return perform_request(payload_with_voice)
+            except RuntimeError as exc:
+                logger.warning(
+                    "Gemini HTTP TTS request with voice '%s' failed (%s). Retrying without explicit voice.",
+                    voice,
+                    exc,
+                )
 
-        request_data = json.dumps(payload).encode("utf-8")
-        endpoint = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.tts_model_name}:generateContent"
-        )
-        http_request = urllib_request.Request(
-            endpoint,
-            data=request_data,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
-        )
-
-        try:
-            with urllib_request.urlopen(http_request, timeout=self._tts_timeout) as response:
-                raw_body = response.read()
-        except urllib_error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="ignore")
-            logger.error(
-                "Gemini HTTP TTS request failed with status %s: %s",
-                exc.code,
-                error_body,
-            )
-            raise RuntimeError(f"Gemini HTTP TTS request failed with status {exc.code}") from exc
-        except urllib_error.URLError as exc:
-            logger.error("Gemini HTTP TTS request failed: %s", exc)
-            raise RuntimeError("Gemini HTTP TTS request failed") from exc
-
-        try:
-            response_payload = json.loads(raw_body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to decode Gemini HTTP TTS response: %s", exc)
-            raise RuntimeError("Gemini HTTP TTS response was not valid JSON") from exc
-
-        audio_bytes = self._extract_audio_from_json(response_payload)
-        if not audio_bytes:
-            logger.error("Gemini HTTP TTS response did not contain audio data")
-            raise RuntimeError("Gemini HTTP TTS response did not contain audio data")
-        return audio_bytes
+        return perform_request(base_payload)
 
     @staticmethod
     def _extract_audio_from_response(response: genai.types.GenerateContentResponse) -> bytes:
