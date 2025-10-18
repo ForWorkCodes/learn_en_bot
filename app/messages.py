@@ -24,7 +24,9 @@ def _iter_examples(raw: Iterable[Any]) -> Iterable[tuple[str, str | None]]:
                 yield text_value, translation_value or None
 
 
-def format_assignment_message(*, verb: str, translation: str, explanation: str, examples_json: str) -> str:
+def _prepare_assignment_details(
+    *, explanation: str, examples_json: str
+) -> tuple[str, str, str | None]:
     try:
         examples_raw = json.loads(examples_json) if examples_json else []
     except Exception:
@@ -38,6 +40,14 @@ def format_assignment_message(*, verb: str, translation: str, explanation: str, 
         explanation_value = " ".join(
             part.strip() for part in explanation_value.splitlines() if part.strip()
         )
+
+    return explanation_value, example_text, example_translation
+
+
+def format_assignment_message(*, verb: str, translation: str, explanation: str, examples_json: str) -> str:
+    explanation_value, example_text, example_translation = _prepare_assignment_details(
+        explanation=explanation, examples_json=examples_json
+    )
 
     parts: list[str] = [
         f"{bold('Фразовый глагол дня')}: {escape(verb)} — {escape(translation)}",
@@ -60,5 +70,33 @@ def format_assignment_message(*, verb: str, translation: str, explanation: str, 
         )
 
     parts.append(escape("Напиши своё короткое предложение — я подскажу, всё ли верно."))
+    return "\n\n".join(parts)
+
+
+def format_assignment_reminder(
+    *, verb: str, translation: str, explanation: str, examples_json: str
+) -> str:
+    explanation_value, example_text, example_translation = _prepare_assignment_details(
+        explanation=explanation, examples_json=examples_json
+    )
+
+    parts: list[str] = [
+        f"{bold('Фразовый глагол дня')}: {escape(verb)} — {escape(translation)}",
+        f"{bold('Объяснение')}: {escape(explanation_value)}",
+    ]
+
+    if example_text:
+        parts.append(f"{bold('Пример')}: {escape(example_text)}")
+        if example_translation:
+            parts.append(f"{bold('Перевод')}: {escape(example_translation)}")
+        else:
+            parts.append(
+                f"{bold('Перевод')}: {escape('Попробуй перевести это предложение самостоятельно.')}"
+            )
+    else:
+        parts.append(
+            f"{bold('Пример')}: {escape('Попробуй составить короткое предложение с этим глаголом.')}"
+        )
+
     return "\n\n".join(parts)
 
