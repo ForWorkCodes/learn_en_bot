@@ -56,6 +56,7 @@ class TextToSpeechService:
         english_rate: str = "+0%",
         gemini_provider: Optional[GeminiTtsProvider] = None,
         prefer_gemini: bool = True,
+        strict_gemini: bool = False,
     ) -> None:
         self.default_language = default_language
         self.slow = slow
@@ -63,6 +64,7 @@ class TextToSpeechService:
         self.english_rate = english_rate
         self.gemini_provider = gemini_provider
         self.prefer_gemini = prefer_gemini
+        self.strict_gemini = strict_gemini
 
     def synthesize(self, text: str, *, language: Optional[str] = None) -> bytes:
         clean_text = (text or "").strip()
@@ -70,6 +72,21 @@ class TextToSpeechService:
             raise ValueError("Cannot synthesize empty text")
 
         lang = (language or self._detect_language(clean_text)).lower()
+
+        if self.strict_gemini:
+            if not self.gemini_provider:
+                logger.error("Gemini TTS strict mode is enabled, but no provider is configured")
+                return b""
+            if not self.gemini_provider.supports_language(lang):
+                logger.error(
+                    "Gemini TTS strict mode is enabled, but language %s is not supported", lang
+                )
+                return b""
+            try:
+                return self._synthesize_gemini(clean_text, lang)
+            except Exception:
+                logger.exception("Gemini TTS failed in strict mode for language %s", lang)
+                return b""
 
         if self._should_use_gemini(lang):
             try:
