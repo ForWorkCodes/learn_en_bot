@@ -14,6 +14,7 @@ from apscheduler.triggers.date import DateTrigger
 from .db import Database
 from .gemini import GeminiClient
 from .keyboards import main_menu_keyboard
+from .messages import format_assignment_message
 from .services.assignments import ensure_daily_assignment
 
 
@@ -38,6 +39,7 @@ class LessonScheduler:
     async def initialize(self) -> None:
         await self._schedule_existing_custom_jobs()
         self._schedule_default_job()
+        await self._deliver_pending_assignments()
 
     def start(self) -> None:
         if not self.scheduler.running:
@@ -158,6 +160,7 @@ class LessonScheduler:
         assignment, text, created = await ensure_daily_assignment(
             self.db, self.gemini, user, force_new=False
         )
+        need_followups = schedule_followups and (created or assignment.delivered_at is None)
         try:
             await self.bot.send_message(
                 chat_id=user.chat_id,
@@ -166,9 +169,13 @@ class LessonScheduler:
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
+            self._schedule_delivery_retry(user.id, assignment.id)
             return
 
-        if schedule_followups and created:
+        await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
+        with suppress(Exception):
+            self.scheduler.remove_job(self._delivery_retry_job_id(assignment.id))
+        if need_followups and assignment.status == "assigned":
             self.plan_followups(user.id, assignment.id)
 
     async def _send_followup(self, user_id: int, assignment_id: int, which: int) -> None:
@@ -203,6 +210,77 @@ class LessonScheduler:
     @staticmethod
     def _followup_job_id(assignment_id: int, which: int) -> str:
         return f"followup{which}_{assignment_id}"
+
+    @staticmethod
+    def _delivery_retry_job_id(assignment_id: int) -> str:
+        return f"delivery_retry_{assignment_id}"
+
+    async def _deliver_pending_assignments(self) -> None:
+        assignments = await asyncio.to_thread(self.db.list_undelivered_assignments)
+        today = datetime.now(self.timezone).date()
+        for assignment in assignments:
+            if assignment.date_assigned < today or assignment.status != "assigned":
+                await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
+                continue
+
+            user = await asyncio.to_thread(self.db.get_user_by_id, assignment.user_id)
+            if not user:
+                await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
+                continue
+
+            await self._deliver_existing_assignment(user, assignment, schedule_followups=True)
+
+    async def _retry_assignment_delivery(self, user_id: int, assignment_id: int) -> None:
+        user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
+        if not user:
+            await asyncio.to_thread(self.db.mark_assignment_delivered, assignment_id)
+            return
+
+        assignment = await asyncio.to_thread(self.db.get_assignment_by_id, assignment_id)
+        if not assignment or assignment.delivered_at is not None:
+            return
+
+        today = datetime.now(self.timezone).date()
+        if assignment.date_assigned < today or assignment.status != "assigned":
+            await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
+            return
+
+        await self._deliver_existing_assignment(user, assignment, schedule_followups=True)
+
+    def _schedule_delivery_retry(self, user_id: int, assignment_id: int, delay_seconds: int = 60) -> None:
+        run_date = datetime.now(self.timezone) + timedelta(seconds=delay_seconds)
+        self.scheduler.add_job(
+            self._retry_assignment_delivery,
+            trigger=DateTrigger(run_date=run_date, timezone=self.timezone),
+            args=[user_id, assignment_id],
+            id=self._delivery_retry_job_id(assignment_id),
+            replace_existing=True,
+        )
+
+    async def _deliver_existing_assignment(self, user, assignment, *, schedule_followups: bool) -> None:
+        text = format_assignment_message(
+            verb=assignment.phrasal_verb,
+            translation=assignment.translation,
+            explanation=assignment.explanation,
+            examples_json=assignment.examples_json,
+        )
+        try:
+            await self.bot.send_message(
+                chat_id=user.chat_id,
+                text=text,
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
+            self._schedule_delivery_retry(user.id, assignment.id)
+            return
+
+        await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
+        with suppress(Exception):
+            self.scheduler.remove_job(self._delivery_retry_job_id(assignment.id))
+
+        if schedule_followups and assignment.status == "assigned":
+            self.plan_followups(user.id, assignment.id)
 
 
 async def setup_scheduler(

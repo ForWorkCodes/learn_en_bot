@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -12,6 +13,9 @@ from ..keyboards import (
 )
 from ..scheduler import LessonScheduler
 from ..services.assignments import ensure_daily_assignment
+
+
+logger = logging.getLogger("learn_en_bot.lesson")
 
 
 router = Router(name=__name__)
@@ -32,7 +36,15 @@ def setup(router_: Router, db: Database, gemini: GeminiClient, scheduler: Lesson
             db, gemini, db_user, force_new=force_new
         )
 
-        await message.answer(text, reply_markup=main_menu_keyboard())
+        try:
+            await message.answer(text, reply_markup=main_menu_keyboard())
+        except Exception:
+            chat = getattr(message, "chat", None)
+            chat_id = getattr(chat, "id", None)
+            logger.exception("Failed to send assignment message to chat %s", chat_id)
+            return
+
+        await asyncio.to_thread(db.mark_assignment_delivered, assignment.id)
         if created:
             scheduler.plan_followups(db_user.id, assignment.id)
 
