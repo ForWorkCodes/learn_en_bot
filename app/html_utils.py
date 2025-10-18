@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from html.entities import name2codepoint
 from html.parser import HTMLParser
 
 
@@ -79,10 +80,21 @@ class _TelegramHTMLSanitizer(HTMLParser):
         self._append(escape(data))
 
     def handle_entityref(self, name: str) -> None:  # type: ignore[override]
-        self._append(f"&{name};")
+        codepoint = name2codepoint.get(name)
+        if codepoint is not None:
+            self._append(escape(chr(codepoint)))
+        else:
+            self._append(escape(f"&{name};"))
 
     def handle_charref(self, name: str) -> None:  # type: ignore[override]
-        self._append(f"&#{name};")
+        try:
+            if name.lower().startswith("x"):
+                codepoint = int(name[1:], 16)
+            else:
+                codepoint = int(name, 10)
+            self._append(escape(chr(codepoint)))
+        except (ValueError, OverflowError):
+            self._append(escape(f"&#{name};"))
 
     def get_output(self) -> str:
         # Close any still-open tags to keep the fragment valid
