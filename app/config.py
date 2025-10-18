@@ -1,7 +1,5 @@
 import os
 from dataclasses import dataclass
-from typing import Final, Optional
-
 from dotenv import load_dotenv
 
 
@@ -13,20 +11,9 @@ class Settings:
     gemini_tts_model: str
     gemini_tts_voice: str
     gemini_tts_mime_type: str
-    tts_prefer_gemini: bool
-    tts_strict_gemini: bool
     database_url: str
     schedule_cron: str
     tz: str
-
-
-FALSE_VALUES: Final[set[str]] = {"0", "false", "no", "off", ""}
-
-
-def _to_bool(raw: Optional[str], *, default: bool) -> bool:
-    if raw is None:
-        return default
-    return raw.strip().lower() not in FALSE_VALUES
 
 
 def load_settings() -> Settings:
@@ -38,8 +25,6 @@ def load_settings() -> Settings:
         gemini_tts_model=os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-tts"),
         gemini_tts_voice=os.getenv("GEMINI_TTS_VOICE", "Puck"),
         gemini_tts_mime_type=os.getenv("GEMINI_TTS_MIME_TYPE", "audio/mp3"),
-        tts_prefer_gemini=_to_bool(os.getenv("TTS_PREFER_GEMINI", "true"), default=True),
-        tts_strict_gemini=_to_bool(os.getenv("TTS_STRICT_GEMINI"), default=False),
         database_url=os.getenv("DATABASE_URL", "sqlite:///learn_en.db"),
         schedule_cron=os.getenv("SCHEDULE_CRON", "0 10 * * *"),
         tz=os.getenv("TZ", "UTC"),
