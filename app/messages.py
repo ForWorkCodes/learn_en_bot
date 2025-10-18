@@ -32,5 +32,5 @@ def format_assignment_message(*, verb: str, translation: str, explanation: str, 
 
     parts.append("")
     parts.append("Напиши своё короткое предложение — я подскажу, всё ли верно.")
-    return "<br>".join(parts)
+    return "\n".join(parts)
 
