@@ -1,9 +1,11 @@
 import asyncio
+from html import escape
 
 from aiogram import Router, types
 
 from ..db import Database
 from ..gemini import GeminiClient
+from ..html_utils import sanitize_html_fragment
 
 
 router = Router(name=__name__)
@@ -35,9 +37,12 @@ def setup(router_, db: Database, gemini: GeminiClient):
 
             if mastered:
                 db.mark_mastered(assgn.id)
-                await message.answer(feedback + "\n<b>Отлично!</b> Задание на сегодня выполнено ✅")
+                success_message = (
+                    feedback + "\n<b>Отлично!</b> Задание на сегодня выполнено ✅"
+                )
+                await message.answer(_safe_html(success_message))
             else:
-                await message.answer(feedback)
+                await message.answer(_safe_html(feedback))
             return
 
         # Общий диалог: просим Gemini вернуть HTML-фрагмент вместо Markdown
@@ -58,6 +63,20 @@ def setup(router_, db: Database, gemini: GeminiClient):
                 await message.bot.delete_message(chat_id=message.chat.id, message_id=waiting.message_id)
             except Exception:
                 pass
-        await message.answer(reply)
+        await message.answer(_safe_html(reply, fallback="Пока не могу ответить. Попробуйте позже."))
 
     router_.message.register(on_text)
+
+
+def _safe_html(text: str, fallback: str | None = None) -> str:
+    sanitized = sanitize_html_fragment(text)
+    if sanitized:
+        return sanitized
+
+    if fallback:
+        fallback_sanitized = sanitize_html_fragment(fallback)
+        if fallback_sanitized:
+            return fallback_sanitized
+        return escape(fallback)
+
+    return escape(text)
