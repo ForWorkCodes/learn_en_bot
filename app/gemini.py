@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from typing import Optional
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 import google.generativeai as genai
+from google.generativeai import types as genai_types
 
 
 logger = logging.getLogger("gemini")
@@ -16,10 +20,13 @@ class GeminiClient:
         api_key: str,
         model: str = "gemini-2.5-flash",
         tts_model: str = "gemini-2.5-flash-tts",
+        *,
+        tts_timeout: float = 30.0,
     ) -> None:
         self.api_key = api_key
         self.model_name = model
         self.tts_model_name = tts_model
+        self._tts_timeout = tts_timeout
         self.model: Optional[genai.GenerativeModel]
         self.tts_model: Optional[genai.GenerativeModel]
         if not api_key:
@@ -59,38 +66,109 @@ class GeminiClient:
     def supports_audio(self) -> bool:
         return bool(self.tts_model)
 
-    def synthesize_audio(self, text: str, *, voice: Optional[str] = None, mime_type: str = "audio/mp3") -> bytes:
+    def synthesize_audio(
+        self,
+        text: str,
+        *,
+        voice: Optional[str] = None,
+        mime_type: str = "audio/ogg; codecs=opus",
+    ) -> bytes:
         clean_text = (text or "").strip()
         if not clean_text:
             raise ValueError("Cannot synthesize empty text")
         if not self.tts_model:
-            raise RuntimeError("Gemini TTS model is not configured")
-
-        request_kwargs: dict[str, object] = {"response_mime_type": mime_type}
-        if voice:
-            request_kwargs["speech_config"] = {"voice": voice}
+            logger.debug("Gemini SDK TTS model is unavailable; using direct HTTP request")
+            return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
 
         try:
             response = self.tts_model.generate_content(
                 clean_text,
-                **request_kwargs,
+                generation_config=genai_types.GenerationConfig(
+                    response_mime_type=mime_type,
+                ),
+                request_options=self._build_speech_request_options(voice),
             )
-        except TypeError:
-            logger.debug(
-                "Gemini TTS model rejected audio kwargs; falling back to generation_config",
-                exc_info=True,
-            )
-            response = self.tts_model.generate_content(
-                clean_text,
-                generation_config={"response_mime_type": mime_type},
-            )
-        except Exception as exc:
-            logger.exception("Gemini TTS request failed: %s", exc)
-            raise
+            audio_bytes = self._extract_audio_from_response(response)
+            if audio_bytes:
+                return audio_bytes
+            logger.warning("Gemini SDK TTS response did not include audio; retrying over HTTP")
+        except Exception:
+            logger.exception("Gemini SDK TTS synthesis failed; retrying over HTTP")
 
-        audio_bytes = self._extract_audio_from_response(response)
+        return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
+
+    def _build_speech_request_options(self, voice: Optional[str]) -> dict[str, object]:
+        if not voice:
+            return {}
+        return {"speech_config": {"voice": voice}}
+
+    def _synthesize_audio_via_http(
+        self,
+        text: str,
+        *,
+        mime_type: str,
+        voice: Optional[str],
+    ) -> bytes:
+        if not self.api_key:
+            raise RuntimeError("Gemini API key is not configured; cannot call TTS endpoint")
+
+        payload: dict[str, object] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": text,
+                        }
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": mime_type,
+            },
+        }
+        if voice:
+            payload["speechConfig"] = {"voice": voice}
+
+        request_data = json.dumps(payload).encode("utf-8")
+        endpoint = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.tts_model_name}:generateContent"
+        )
+        http_request = urllib_request.Request(
+            endpoint,
+            data=request_data,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
+        )
+
+        try:
+            with urllib_request.urlopen(http_request, timeout=self._tts_timeout) as response:
+                raw_body = response.read()
+        except urllib_error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore")
+            logger.error(
+                "Gemini HTTP TTS request failed with status %s: %s",
+                exc.code,
+                error_body,
+            )
+            raise RuntimeError(f"Gemini HTTP TTS request failed with status {exc.code}") from exc
+        except urllib_error.URLError as exc:
+            logger.error("Gemini HTTP TTS request failed: %s", exc)
+            raise RuntimeError("Gemini HTTP TTS request failed") from exc
+
+        try:
+            response_payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to decode Gemini HTTP TTS response: %s", exc)
+            raise RuntimeError("Gemini HTTP TTS response was not valid JSON") from exc
+
+        audio_bytes = self._extract_audio_from_json(response_payload)
         if not audio_bytes:
-            raise RuntimeError("Gemini TTS response did not include audio data")
+            logger.error("Gemini HTTP TTS response did not contain audio data")
+            raise RuntimeError("Gemini HTTP TTS response did not contain audio data")
         return audio_bytes
 
     @staticmethod
@@ -116,6 +194,37 @@ class GeminiClient:
                         return base64.b64decode(data)
                     except Exception:
                         logger.debug("Failed to base64-decode audio payload from Gemini response")
+        return b""
+
+    @staticmethod
+    def _extract_audio_from_json(payload: dict[str, object]) -> bytes:
+        candidates = payload.get("candidates") if isinstance(payload, dict) else None
+        if not isinstance(candidates, list):
+            return b""
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            content = candidate.get("content")
+            if not isinstance(content, dict):
+                continue
+            parts = content.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                inline_data = part.get("inlineData")
+                if not isinstance(inline_data, dict):
+                    continue
+                data = inline_data.get("data")
+                if isinstance(data, str) and data:
+                    try:
+                        return base64.b64decode(data)
+                    except Exception:
+                        logger.debug("Failed to base64-decode audio payload from Gemini JSON response")
+                elif isinstance(data, bytes) and data:
+                    return data
         return b""
 
     def daily_tip(self) -> str:
