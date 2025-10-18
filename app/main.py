@@ -15,6 +15,7 @@ from .handlers import start as start_module
 from .handlers import chat as chat_module
 from .handlers import lesson as lesson_module
 from .scheduler import setup_scheduler
+from .tts import TextToSpeechService
 
 
 def setup_logging() -> None:
@@ -51,6 +52,9 @@ async def main() -> None:
     # Gemini
     gemini = GeminiClient(settings.gemini_api_key)
 
+    # Text-to-Speech
+    tts = TextToSpeechService()
+
     # Bot
     bot = Bot(
         token=settings.telegram_bot_token,
@@ -62,6 +66,7 @@ async def main() -> None:
         bot,
         db,
         gemini,
+        tts,
         cron=settings.schedule_cron,
         tz=settings.tz,
     )
@@ -69,8 +74,8 @@ async def main() -> None:
 
     # Handlers
     start_module.setup(start_router, db, scheduler)
-    chat_module.setup(chat_router, db, gemini)
-    lesson_module.setup(lesson_router, db, gemini, scheduler)
+    chat_module.setup(chat_router, db, gemini, tts)
+    lesson_module.setup(lesson_router, db, gemini, scheduler, tts)
     dp.include_router(start_router)
     dp.include_router(chat_router)
     dp.include_router(lesson_router)

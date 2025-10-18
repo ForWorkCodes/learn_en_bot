@@ -1,16 +1,46 @@
 import asyncio
+import logging
 
 from aiogram import Router, types
 
 from ..db import Database
 from ..gemini import GeminiClient
 from ..markdown import bold, escape
+from ..tts import TextToSpeechService
 
 
 router = Router(name=__name__)
 
 
-def setup(router_, db: Database, gemini: GeminiClient):
+logger = logging.getLogger("learn_en_bot.chat")
+
+
+def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService):
+    async def _send_with_voice(
+        message: types.Message,
+        markdown_text: str,
+        plain_text: str,
+    ) -> None:
+        await message.answer(markdown_text)
+        plain_value = (plain_text or "").strip()
+        if not plain_value:
+            return
+
+        try:
+            audio_bytes = await asyncio.to_thread(tts.synthesize, plain_value)
+        except Exception:
+            logger.exception("Failed to generate voice message for Gemini reply")
+            return
+
+        if not audio_bytes:
+            return
+
+        audio = types.BufferedInputFile(audio_bytes, filename="gemini-response.mp3")
+        try:
+            await message.answer_audio(audio)
+        except Exception:
+            logger.exception("Failed to send voice message for Gemini reply")
+
     # Любой текст: если есть сегодняшнее задание — оцениваем; иначе обычный ответ
     async def on_text(message: types.Message) -> None:
         text = (message.text or "").strip()
@@ -36,13 +66,20 @@ def setup(router_, db: Database, gemini: GeminiClient):
 
             if mastered:
                 db.mark_mastered(assgn.id)
-                success_message = (
+                success_plain = (
+                    f"{feedback}\n\nОтлично! Задание на сегодня выполнено ✅"
+                )
+                success_markdown = (
                     f"{_safe_markdown(feedback)}\n\n"
                     f"{bold('Отлично!')} {escape('Задание на сегодня выполнено ✅')}"
                 )
-                await message.answer(success_message)
+                await _send_with_voice(message, success_markdown, success_plain)
             else:
-                await message.answer(_safe_markdown(feedback))
+                await _send_with_voice(
+                    message,
+                    _safe_markdown(feedback),
+                    feedback,
+                )
             return
 
         waiting = await message.answer(escape("Ожидаем ответа ..."))
@@ -61,8 +98,11 @@ def setup(router_, db: Database, gemini: GeminiClient):
                 await message.bot.delete_message(chat_id=message.chat.id, message_id=waiting.message_id)
             except Exception:
                 pass
-        await message.answer(
-            _safe_markdown(reply, fallback="Пока не могу ответить. Попробуйте позже.")
+        plain_text = reply or "Пока не могу ответить. Попробуйте позже."
+        await _send_with_voice(
+            message,
+            _safe_markdown(reply, fallback="Пока не могу ответить. Попробуйте позже."),
+            plain_text,
         )
 
     router_.message.register(on_text)
