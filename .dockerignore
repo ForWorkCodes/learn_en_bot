@@ -1,0 +1,21 @@
+# Игнорировать ненужные файлы и папки при сборке
+
+# Git и IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Кэш Python
+*/__pycache__
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Виртуальное окружение
+venv/
+.env
+
+# Логи
+*.log
