@@ -12,6 +12,7 @@
    - `TELEGRAM_BOT_TOKEN`
    - `GEMINI_API_KEY`
    - при необходимости: `DATABASE_URL`, `SCHEDULE_CRON`, `TZ`
+   - настройки синтеза речи: `GEMINI_TTS_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TTS_MIME_TYPE`
 2) Установите зависимости:
    - `python -m venv .venv`
    - `.venv\\\\Scripts\\\\activate` (Windows)
@@ -38,3 +39,4 @@
 - По умолчанию используется SQLite файл `learn_en.db` в корне.
 - Для Gemini обязателен `GEMINI_API_KEY`.
 - Расписание задаётся `SCHEDULE_CRON` (формат cron), таймзона — `TZ`.
+- синтез речи выполняется только моделью Gemini; других движков в приложении нет.

@@ -13,6 +13,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chat_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    daily_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     def __repr__(self) -> str:
@@ -34,6 +36,7 @@ class Assignment(Base):
     status: Mapped[str] = mapped_column(String(32), default="assigned")  # assigned|mastered
     followup1_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     followup2_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=datetime.utcnow)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

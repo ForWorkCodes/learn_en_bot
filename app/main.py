@@ -4,6 +4,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from .config import load_settings
 from .db import Database
@@ -13,6 +15,7 @@ from .handlers import start as start_module
 from .handlers import chat as chat_module
 from .handlers import lesson as lesson_module
 from .scheduler import setup_scheduler
+from .tts import TextToSpeechService, GeminiTtsProvider
 
 
 def setup_logging() -> None:
@@ -47,33 +50,69 @@ async def main() -> None:
     db.init_db()
 
     # Gemini
-    gemini = GeminiClient(settings.gemini_api_key)
+    gemini = GeminiClient(
+        settings.gemini_api_key,
+        model=settings.gemini_model,
+        tts_model=settings.gemini_tts_model,
+    )
+
+    # Text-to-Speech
+    gemini_tts_provider = None
+    if gemini.supports_audio:
+        gemini_tts_provider = GeminiTtsProvider(
+            gemini,
+            voice=settings.gemini_tts_voice,
+            mime_type=settings.gemini_tts_mime_type,
+        )
+    tts = TextToSpeechService(
+        gemini_provider=gemini_tts_provider,
+        fallback_provider=None,
+    )
 
     # Bot
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(
+        token=settings.telegram_bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
+    )
     dp = Dispatcher()
 
+    scheduler = await setup_scheduler(
+        bot,
+        db,
+        gemini,
+        tts,
+        cron=settings.schedule_cron,
+        tz=settings.tz,
+    )
+    scheduler.start()
+
     # Handlers
-    start_module.setup(start_router, db)
-    chat_module.setup(chat_router, db, gemini)
-    lesson_module.setup(lesson_router, db, gemini)
+    start_module.setup(start_router, db, scheduler)
+    chat_module.setup(chat_router, db, gemini, tts)
+    lesson_module.setup(lesson_router, db, gemini, scheduler, tts)
     dp.include_router(start_router)
     dp.include_router(chat_router)
     dp.include_router(lesson_router)
-
-    # Scheduler
-    scheduler = setup_scheduler(bot, db, gemini, cron=settings.schedule_cron, tz=settings.tz)
-    scheduler.start()
 
     # Bot menu commands
     try:
         from aiogram.types import BotCommand
         await bot.set_my_commands([
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="lesson", description="Получить фразовый глагол"),
+            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
         ])
     except Exception:
         logger.warning("Failed to set bot commands", exc_info=True)
+
+    # Ensure commands descriptions are set in readable Russian
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Начать"),
+            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
+        ])
+    except Exception:
+        logger.warning("Failed to override bot commands", exc_info=True)
 
     logger.info("Bot started. Polling...")
     await dp.start_polling(bot)
