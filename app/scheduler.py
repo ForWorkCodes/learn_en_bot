@@ -170,14 +170,18 @@ class LessonScheduler:
             await self.bot.send_message(
                 chat_id=user.chat_id,
                 text=text.markdown,
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(send_audio=bool(user.send_audio)),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
 
-        await self._send_voice_message(user.chat_id, text)
+        await self._send_voice_message(
+            user.chat_id,
+            text,
+            send_audio=bool(user.send_audio),
+        )
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -275,14 +279,18 @@ class LessonScheduler:
             await self.bot.send_message(
                 chat_id=user.chat_id,
                 text=text.markdown,
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(send_audio=bool(user.send_audio)),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
 
-        await self._send_voice_message(user.chat_id, text)
+        await self._send_voice_message(
+            user.chat_id,
+            text,
+            send_audio=bool(user.send_audio),
+        )
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -292,7 +300,12 @@ class LessonScheduler:
             self.plan_followups(user.id, assignment.id)
 
 
-    async def _send_voice_message(self, chat_id: int, formatted: FormattedMessage) -> None:
+    async def _send_voice_message(
+        self, chat_id: int, formatted: FormattedMessage, *, send_audio: bool
+    ) -> None:
+        if not send_audio:
+            return
+
         plain_value = (formatted.plain or "").strip()
         if not plain_value:
             return
