@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+import wave
 import base64
 import json
 import logging
@@ -7,7 +9,8 @@ from typing import Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 
 logger = logging.getLogger("gemini")
@@ -33,24 +36,18 @@ class GeminiClient:
             self.model = None
             self.tts_model = None
         else:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(self.model_name)
-            try:
-                self.tts_model = genai.GenerativeModel(self.tts_model_name) if tts_model else None
-            except Exception:
-                logger.warning(
-                    "Failed to initialize Gemini TTS model '%s'. Audio synthesis will fallback to direct HTTP requests.",
-                    self.tts_model_name,
-                    exc_info=True,
-                )
-                self.tts_model = None
+            self._client = genai.Client(api_key=api_key)
 
     def generate(self, prompt: str, fallback: str = "") -> str:
-        if not self.model:
+        if not self.api_key:
             logger.warning("GEMINI_API_KEY is not set; returning fallback")
             return fallback or "(No GEMINI_API_KEY set — returning placeholder)"
         try:
-            response = self.model.generate_content(prompt)
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+            )
             # google-generativeai может возвращать список кандидатов; используем текст
             text = getattr(response, "text", None)
             if text:
@@ -63,45 +60,21 @@ class GeminiClient:
 
     @property
     def supports_audio(self) -> bool:
-        return bool(self.tts_model or (self.api_key and self.tts_model_name))
+        return bool(self.api_key and self.tts_model_name)
 
     def synthesize_audio(
         self,
         text: str,
         *,
         voice: Optional[str] = None,
-        mime_type: str = "audio/ogg; codecs=opus",
+        mime_type: str = "audio/mp3",
     ) -> bytes:
         clean_text = (text or "").strip()
         if not clean_text:
             raise ValueError("Cannot synthesize empty text")
-        if not self.tts_model:
-            logger.debug("Gemini SDK TTS model is unavailable; using direct HTTP request")
-            return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
-
-        generation_config: dict[str, object] = {
-            "response_mime_type": mime_type,
-            "response_modalities": ["AUDIO"],
-        }
-
-        if voice:
-            generation_config["speech_config"] = {
-                "voice_config": {"voice_name": voice}
-            }
-
-        try:
-            response = self.tts_model.generate_content(
-                clean_text,
-                generation_config=generation_config,
-            )
-            audio_bytes = self._extract_audio_from_response(response)
-            if audio_bytes:
-                return audio_bytes
-            logger.warning("Gemini SDK TTS response did not include audio; retrying over HTTP")
-        except Exception:
-            logger.exception("Gemini SDK TTS synthesis failed; retrying over HTTP")
-
-        return self._synthesize_audio_via_http(clean_text, mime_type=mime_type, voice=voice)
+        
+        # Старый SDK google.generativeai не умеет AUDIO → используем только REST.
+        return self._synthesize_audio_via_client(clean_text, mime_type=mime_type, voice=voice)
 
     def _synthesize_audio_via_http(
         self,
@@ -165,7 +138,7 @@ class GeminiClient:
                 }
             ],
             "generationConfig": {
-                "responseMimeType": mime_type,
+                # Для generateContent используется внутри generationConfig
                 "responseModalities": ["AUDIO"],
             },
         }
@@ -175,9 +148,17 @@ class GeminiClient:
         # Primary endpoint: Responses API (newer surface that allows audio + voices).
         responses_payload = json.loads(json.dumps(base_payload))
         responses_payload["model"] = f"models/{self.tts_model_name}"
+        
+        responses_payload["config"] = {
+            "responseModalities": ["AUDIO"],
+        }
         if voice:
-            speech_config = responses_payload.setdefault("speechConfig", {})
-            speech_config["voiceConfig"] = {"voiceName": voice}
+            responses_payload["config"]["speechConfig"] = {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": voice}
+                }
+            }
+
         endpoints.append(
             (
                 "https://generativelanguage.googleapis.com/v1beta/responses:generate",
@@ -188,12 +169,14 @@ class GeminiClient:
 
         # Legacy endpoint: generateContent. Remove fields unsupported by the legacy schema.
         legacy_payload = json.loads(json.dumps(base_payload))
-        legacy_generation_cfg = legacy_payload.get("generationConfig", {})
-        legacy_generation_cfg.pop("responseModalities", None)
+        legacy_generation_cfg = legacy_payload.setdefault("generationConfig", {})
+        legacy_generation_cfg["responseModalities"] = ["AUDIO"]
         if voice:
-            generation_config = legacy_payload.setdefault("generationConfig", {})
-            audio_config = generation_config.setdefault("audioConfig", {})
-            audio_config["voiceConfig"] = {"voiceName": voice}
+            legacy_generation_cfg["speechConfig"] = {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": voice}
+                }
+            }
         legacy_endpoint = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.tts_model_name}:generateContent"
@@ -226,19 +209,52 @@ class GeminiClient:
 
         raise RuntimeError("Gemini HTTP TTS request failed") if last_error is None else last_error
 
-    @staticmethod
-    def _extract_audio_from_response(response: genai.types.GenerateContentResponse) -> bytes:
+    def _synthesize_audio_via_client(
+        self,
+        text: str,
+        *,
+        mime_type: str,
+        voice: Optional[str],
+    ) -> bytes:
+        client = genai.Client(api_key=self.api_key)
+
+        def make_config() -> types.GenerateContentConfig:
+            cfg_kwargs: dict = {"response_modalities": ["AUDIO"]}
+            if voice:
+                cfg_kwargs["speech_config"] = types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                    )
+                )
+            return types.GenerateContentConfig(**cfg_kwargs)
+
         try:
-            candidates = response.candidates
+            cfg = make_config()
+            response = client.models.generate_content(
+                model=self.tts_model_name,
+                contents=text,
+                config=cfg,
+            )
+            pcm_bytes = self._extract_audio_from_response(response)
+            if not pcm_bytes:
+                raise RuntimeError("Gemini TTS response did not include audio data")
+            # Convert raw PCM to WAV container like in the sample
+            return self._pcm_to_wav(pcm_bytes, channels=1, rate=24000, sample_width=2)
         except Exception:
-            response.resolve()
-            candidates = response.candidates
+            logger.exception("Gemini TTS synthesis failed via official client")
+            raise
+
+        
+
+    @staticmethod
+    def _extract_audio_from_response(response) -> bytes:
+        candidates = getattr(response, "candidates", []) or []
 
         for candidate in candidates:
             content = getattr(candidate, "content", None)
             parts = getattr(content, "parts", []) if content else []
             for part in parts:
-                inline_data = getattr(part, "inline_data", None)
+                inline_data = getattr(part, "inline_data", None) or getattr(part, "inlineData", None)
                 if not inline_data:
                     continue
                 data = getattr(inline_data, "data", b"")
@@ -250,6 +266,16 @@ class GeminiClient:
                     except Exception:
                         logger.debug("Failed to base64-decode audio payload from Gemini response")
         return b""
+
+    @staticmethod
+    def _pcm_to_wav(pcm: bytes, *, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> bytes:
+        buf = BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(rate)
+            wf.writeframes(pcm)
+        return buf.getvalue()
 
     @staticmethod
     def _extract_audio_from_json(payload: dict[str, object]) -> bytes:

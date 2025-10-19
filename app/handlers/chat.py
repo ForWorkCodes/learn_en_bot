@@ -31,7 +31,7 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
             tts=tts,
             logger=logger,
             context="Gemini reply",
-            audio_filename="gemini-response.mp3",
+            audio_filename="gemini-response.wav",
         )
 
     # Любой текст: если есть сегодняшнее задание — оцениваем; иначе обычный ответ

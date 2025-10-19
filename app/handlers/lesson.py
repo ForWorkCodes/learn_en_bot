@@ -45,7 +45,7 @@ def setup(
             tts=tts,
             logger=logger,
             context="assignment",
-            audio_filename="assignment.mp3",
+            audio_filename="assignment.wav",
         )
 
     async def send_assignment(

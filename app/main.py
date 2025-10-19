@@ -66,6 +66,7 @@ async def main() -> None:
         )
     tts = TextToSpeechService(
         gemini_provider=gemini_tts_provider,
+        fallback_provider=None,
     )
 
     # Bot
