@@ -7,7 +7,12 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from ..db import Database
 from ..gemini import GeminiClient
 from ..handlers.voice import send_voice_response
-from ..keyboards import GET_NEW_VERB_BUTTON, GET_VERB_NOW_BUTTON, SET_TIME_BUTTON
+from ..keyboards import (
+    GET_NEW_VERB_BUTTON,
+    GET_VERB_NOW_BUTTON,
+    SET_TIME_BUTTON,
+    UNSUBSCRIBE_BUTTON,
+)
 from ..markdown import bold, escape
 from ..tts import TextToSpeechService
 
@@ -43,7 +48,7 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
         if not text:
             return
 
-        if text in {SET_TIME_BUTTON, GET_VERB_NOW_BUTTON, GET_NEW_VERB_BUTTON}:
+        if text in {SET_TIME_BUTTON, GET_VERB_NOW_BUTTON, GET_NEW_VERB_BUTTON, UNSUBSCRIBE_BUTTON}:
             raise SkipHandler()
 
         tg_user = message.from_user

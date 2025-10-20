@@ -1,27 +1,27 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 
-SET_TIME_BUTTON = "Настроить время"
-GET_VERB_NOW_BUTTON = "Напомнить фразовый глагол"
-GET_NEW_VERB_BUTTON = "Новый фразовый глагол"
-AUDIO_DISABLE_BUTTON = "Отключить аудио"
-AUDIO_ENABLE_BUTTON = "Включить аудио"
+SET_TIME_BUTTON = "Время"
+GET_VERB_NOW_BUTTON = "Напомнить"
+GET_NEW_VERB_BUTTON = "Новый"
+AUDIO_DISABLE_BUTTON = "Аудио выкл"
+AUDIO_ENABLE_BUTTON = "Аудио вкл"
+UNSUBSCRIBE_BUTTON = "Отказаться от рассылки"
 CANCEL_BUTTON = "Отмена"
 
 
 def _base_menu_rows(send_audio: bool) -> list[list[KeyboardButton]]:
-    rows: list[list[KeyboardButton]] = [
-        [
-            KeyboardButton(text=SET_TIME_BUTTON),
-            KeyboardButton(text=GET_VERB_NOW_BUTTON),
-        ],
-        [KeyboardButton(text=GET_NEW_VERB_BUTTON)],
+    buttons = [
+        KeyboardButton(text=SET_TIME_BUTTON),
+        KeyboardButton(text=GET_VERB_NOW_BUTTON),
+        KeyboardButton(text=GET_NEW_VERB_BUTTON),
+        KeyboardButton(text=AUDIO_DISABLE_BUTTON if send_audio else AUDIO_ENABLE_BUTTON),
+        KeyboardButton(text=UNSUBSCRIBE_BUTTON),
     ]
 
-    audio_button = KeyboardButton(
-        text=AUDIO_DISABLE_BUTTON if send_audio else AUDIO_ENABLE_BUTTON,
-    )
-    rows.append([audio_button])
+    rows: list[list[KeyboardButton]] = []
+    for index in range(0, len(buttons), 3):
+        rows.append(buttons[index : index + 3])
     return rows
 
 

@@ -18,6 +18,9 @@ class User(Base):
     send_audio: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
     )
+    is_subscribed: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     def __repr__(self) -> str:
