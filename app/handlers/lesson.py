@@ -10,8 +10,6 @@ from ..handlers.voice import send_voice_response
 from ..keyboards import (
     GET_NEW_VERB_BUTTON,
     GET_VERB_NOW_BUTTON,
-    GET_NEW_VERB_CALLBACK,
-    GET_VERB_NOW_CALLBACK,
     main_menu_keyboard,
 )
 from ..markdown import escape
@@ -129,30 +127,7 @@ def setup(
     async def on_get_new(message: types.Message) -> None:
         await send_assignment(message, message.from_user, force_new=True)
 
-    async def on_get_now_callback(callback: types.CallbackQuery) -> None:
-        await callback.answer()
-        if not callback.message:
-            return
-        await send_assignment(
-            callback.message,
-            callback.from_user,
-            force_new=False,
-            reminder_only=True,
-        )
-
-    async def on_get_new_callback(callback: types.CallbackQuery) -> None:
-        await callback.answer()
-        if not callback.message:
-            return
-        await send_assignment(
-            callback.message,
-            callback.from_user,
-            force_new=True,
-        )
-
     router_.message.register(on_lesson, Command("lesson"))
     router_.message.register(on_get_now, F.text == GET_VERB_NOW_BUTTON)
     router_.message.register(on_get_new, F.text == GET_NEW_VERB_BUTTON)
-    router_.callback_query.register(on_get_now_callback, F.data == GET_VERB_NOW_CALLBACK)
-    router_.callback_query.register(on_get_new_callback, F.data == GET_NEW_VERB_CALLBACK)
 
