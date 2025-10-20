@@ -7,13 +7,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 from ..db import Database
 from ..keyboards import (
-    CANCEL_TIME_CALLBACK,
-    DISABLE_AUDIO_CALLBACK,
-    ENABLE_AUDIO_CALLBACK,
+    AUDIO_DISABLE_BUTTON,
+    AUDIO_ENABLE_BUTTON,
     GET_NEW_VERB_BUTTON,
     GET_VERB_NOW_BUTTON,
     SET_TIME_BUTTON,
-    SET_TIME_CALLBACK,
     main_menu_keyboard,
     time_settings_keyboard,
 )
@@ -33,19 +31,13 @@ def setup(router_: Router, db: Database, scheduler: LessonScheduler) -> None:
     router_.message.register(start_handler(db), CommandStart())
     router_.message.register(ping_handler, Command("ping"))
     router_.message.register(handle_set_time(db), F.text == SET_TIME_BUTTON)
-    router_.callback_query.register(handle_set_time_callback(db), F.data == SET_TIME_CALLBACK)
     router_.message.register(
         process_time_input(db, scheduler),
         StateFilter(TimeSettings.waiting_for_time),
     )
-    router_.callback_query.register(
-        cancel_time_configuration(db),
-        StateFilter(TimeSettings.waiting_for_time),
-        F.data == CANCEL_TIME_CALLBACK,
-    )
-    router_.callback_query.register(
+    router_.message.register(
         toggle_audio_notifications(db),
-        (F.data == ENABLE_AUDIO_CALLBACK) | (F.data == DISABLE_AUDIO_CALLBACK),
+        (F.text == AUDIO_ENABLE_BUTTON) | (F.text == AUDIO_DISABLE_BUTTON),
     )
 
 
@@ -93,27 +85,6 @@ def handle_set_time(db: Database):
     return handler
 
 
-def handle_set_time_callback(db: Database):
-    async def handler(callback: types.CallbackQuery, state: FSMContext) -> None:
-        user = callback.from_user
-        message = callback.message
-        if not user or not message:
-            await callback.answer()
-            return
-
-        db_user = await asyncio.to_thread(
-            db.add_or_get_user, chat_id=user.id, username=user.username
-        )
-        await state.set_state(TimeSettings.waiting_for_time)
-        await callback.answer()
-        await message.answer(
-            escape("Введите время, когда отправлять глагол, в формате ЧЧ:ММ. Например: 09:30."),
-            reply_markup=time_settings_keyboard(send_audio=db_user.send_audio),
-        )
-
-    return handler
-
-
 def process_time_input(db: Database, scheduler: LessonScheduler):
     async def handler(message: types.Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
@@ -133,6 +104,10 @@ def process_time_input(db: Database, scheduler: LessonScheduler):
                 escape("Настройку времени отменил. Выберите действие на клавиатуре."),
                 reply_markup=main_menu_keyboard(send_audio=send_audio),
             )
+            return
+
+        if text in {AUDIO_DISABLE_BUTTON, AUDIO_ENABLE_BUTTON}:
+            await toggle_audio_notifications(db)(message, state)
             return
 
         if text.lower() in {"cancel", "отмена"}:
@@ -174,76 +149,59 @@ def process_time_input(db: Database, scheduler: LessonScheduler):
     return handler
 
 
-def cancel_time_configuration(db: Database):
-    async def handler(callback: types.CallbackQuery, state: FSMContext) -> None:
-        user = callback.from_user
-        message = callback.message
-        if not user or not message:
-            await callback.answer()
-            return
-
-        db_user = await asyncio.to_thread(
-            db.add_or_get_user, chat_id=user.id, username=user.username
-        )
-        await state.clear()
-        await callback.answer("Настройка отменена")
-        await message.answer(
-            escape("Настройку времени отменил. Выберите действие на клавиатуре."),
-            reply_markup=main_menu_keyboard(send_audio=db_user.send_audio),
-        )
-
-    return handler
-
-
 def toggle_audio_notifications(db: Database):
-    async def handler(callback: types.CallbackQuery) -> None:
-        user = callback.from_user
-        message = callback.message
-        if not user or not message:
-            await callback.answer()
+    async def handler(message: types.Message, state: FSMContext | None = None) -> None:
+        text = (message.text or "").strip()
+        enable_audio = text == AUDIO_ENABLE_BUTTON
+        disable_audio = text == AUDIO_DISABLE_BUTTON
+        if not enable_audio and not disable_audio:
+            return
+
+        user = message.from_user
+        if not user:
+            if state:
+                await state.clear()
+            await message.answer(
+                escape("Не удалось определить пользователя. Попробуйте позже."),
+                reply_markup=main_menu_keyboard(send_audio=True),
+            )
             return
 
         db_user = await asyncio.to_thread(
             db.add_or_get_user, chat_id=user.id, username=user.username
         )
-        enable_audio = callback.data == ENABLE_AUDIO_CALLBACK
-        disable_audio = callback.data == DISABLE_AUDIO_CALLBACK
-        if not enable_audio and not disable_audio:
-            await callback.answer()
-            return
-
         current_state = bool(db_user.send_audio)
         desired_state = enable_audio
+
+        reply_markup = main_menu_keyboard(send_audio=desired_state)
+
         if desired_state == current_state:
-            await callback.answer(
-                "Голосовые уже {}.".format(
-                    "включены" if desired_state else "отключены"
-                )
+            if state:
+                await state.clear()
+            await message.answer(
+                escape(
+                    "Голосовые уже {}.".format(
+                        "включены" if desired_state else "отключены"
+                    )
+                ),
+                reply_markup=reply_markup,
             )
-            try:
-                await message.edit_reply_markup(
-                    reply_markup=main_menu_keyboard(send_audio=desired_state)
-                )
-            except Exception:
-                pass
             return
 
         await asyncio.to_thread(
             db.update_user_audio_preference, db_user.id, desired_state
         )
 
+        if state:
+            await state.clear()
+
         response_text = (
             "Голосовые ответы включены." if desired_state else "Голосовые ответы отключены."
         )
-        reply_markup = main_menu_keyboard(send_audio=desired_state)
-        try:
-            await message.edit_reply_markup(reply_markup=reply_markup)
-        except Exception:
-            await message.answer(
-                escape("Обновил настройки клавиатуры."), reply_markup=reply_markup
-            )
-
-        await callback.answer(response_text)
+        await message.answer(
+            escape(response_text),
+            reply_markup=reply_markup,
+        )
 
     return handler
 
