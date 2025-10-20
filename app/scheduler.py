@@ -204,7 +204,7 @@ class LessonScheduler:
 
     async def _send_followup(self, user_id: int, assignment_id: int, which: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             return
 
         assignment = await asyncio.to_thread(self.db.get_today_assignment, user.id)
@@ -248,7 +248,7 @@ class LessonScheduler:
                 continue
 
             user = await asyncio.to_thread(self.db.get_user_by_id, assignment.user_id)
-            if not user:
+            if not user or not user.is_subscribed:
                 await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
                 continue
 
@@ -256,7 +256,7 @@ class LessonScheduler:
 
     async def _retry_assignment_delivery(self, user_id: int, assignment_id: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             await asyncio.to_thread(self.db.mark_assignment_delivered, assignment_id)
             return
 
