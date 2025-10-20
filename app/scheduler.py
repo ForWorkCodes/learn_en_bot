@@ -59,7 +59,14 @@ class LessonScheduler:
             self.scheduler.remove_job(self._daily_job_id(user_id))
 
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user or user.daily_hour is None or user.daily_minute is None:
+        if (
+            not user
+            or not user.is_subscribed
+            or user.daily_hour is None
+            or user.daily_minute is None
+            or not (0 <= user.daily_hour <= 23)
+            or not (0 <= user.daily_minute <= 59)
+        ):
             return
 
         self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
@@ -111,7 +118,13 @@ class LessonScheduler:
     async def _schedule_existing_custom_jobs(self) -> None:
         users = await asyncio.to_thread(self.db.list_users)
         for user in users:
-            if user.daily_hour is None or user.daily_minute is None:
+            if (
+                not user.is_subscribed
+                or user.daily_hour is None
+                or user.daily_minute is None
+                or not (0 <= user.daily_hour <= 23)
+                or not (0 <= user.daily_minute <= 59)
+            ):
                 continue
             self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
 
@@ -157,7 +170,7 @@ class LessonScheduler:
 
     async def _send_custom_job(self, user_id: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             return
         await self._send_assignment_to_user(user, schedule_followups=True)
 
