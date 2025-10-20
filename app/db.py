@@ -23,12 +23,28 @@ class Database:
         try:
             with self.engine.begin() as conn:
                 inspector = inspect(conn)
-                columns = {col["name"] for col in inspector.get_columns("assignments")}
-                if "delivered_at" not in columns:
-                    conn.execute(text("ALTER TABLE assignments ADD COLUMN delivered_at TIMESTAMP NULL"))
-                    conn.execute(text("UPDATE assignments SET delivered_at = CURRENT_TIMESTAMP"))
+
+                assignment_columns = {
+                    column["name"] for column in inspector.get_columns("assignments")
+                }
+                if "delivered_at" not in assignment_columns:
+                    conn.execute(
+                        text("ALTER TABLE assignments ADD COLUMN delivered_at TIMESTAMP NULL")
+                    )
+                    conn.execute(
+                        text("UPDATE assignments SET delivered_at = CURRENT_TIMESTAMP")
+                    )
+
+                user_columns = {column["name"] for column in inspector.get_columns("users")}
+                if "send_audio" not in user_columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE users "
+                            "ADD COLUMN send_audio BOOLEAN NOT NULL DEFAULT TRUE"
+                        )
+                    )
         except Exception:
-            logger.exception("Failed to ensure delivered_at column exists")
+            logger.exception("Failed to ensure database schema is up to date")
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -70,6 +86,13 @@ class Database:
                 return
             user.daily_hour = hour
             user.daily_minute = minute
+
+    def update_user_audio_preference(self, user_id: int, send_audio: bool) -> None:
+        with self.session() as db:
+            user = db.get(User, user_id)
+            if not user:
+                return
+            user.send_audio = send_audio
 
     def list_users(self) -> List[User]:
         with self.session() as db:

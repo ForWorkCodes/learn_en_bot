@@ -15,6 +15,9 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     daily_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
     daily_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    send_audio: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     def __repr__(self) -> str:

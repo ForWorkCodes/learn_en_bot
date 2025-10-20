@@ -23,16 +23,19 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
         message: types.Message,
         markdown_text: str,
         plain_text: str,
+        *,
+        send_audio: bool,
     ) -> None:
         await message.answer(markdown_text)
-        await send_voice_response(
-            message,
-            plain_text,
-            tts=tts,
-            logger=logger,
-            context="Gemini reply",
-            audio_filename="gemini-response.wav",
-        )
+        if send_audio:
+            await send_voice_response(
+                message,
+                plain_text,
+                tts=tts,
+                logger=logger,
+                context="Gemini reply",
+                audio_filename="gemini-response.wav",
+            )
 
     # Любой текст: если есть сегодняшнее задание — оцениваем; иначе обычный ответ
     async def on_text(message: types.Message) -> None:
@@ -44,9 +47,15 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
             raise SkipHandler()
 
         tg_user = message.from_user
+        db_user = None
         assgn = None
         if tg_user:
+            db_user = await asyncio.to_thread(
+                db.add_or_get_user, chat_id=tg_user.id, username=tg_user.username
+            )
             assgn = db.get_today_assignment_by_chat(tg_user.id)
+
+        send_audio = bool(db_user.send_audio) if db_user else True
 
         if assgn and assgn.status != "mastered":
             waiting = await message.answer(escape("Ожидаем ответа ..."))
@@ -69,12 +78,18 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
                     f"{_safe_markdown(feedback)}\n\n"
                     f"{bold('Отлично!')} {escape('Задание на сегодня выполнено ✅')}"
                 )
-                await _send_with_voice(message, success_markdown, success_plain)
+                await _send_with_voice(
+                    message,
+                    success_markdown,
+                    success_plain,
+                    send_audio=send_audio,
+                )
             else:
                 await _send_with_voice(
                     message,
                     _safe_markdown(feedback),
                     feedback,
+                    send_audio=send_audio,
                 )
             return
 
@@ -99,6 +114,7 @@ def setup(router_, db: Database, gemini: GeminiClient, tts: TextToSpeechService)
             message,
             _safe_markdown(reply, fallback="Пока не могу ответить. Попробуйте позже."),
             plain_text,
+            send_audio=send_audio,
         )
 
     router_.message.register(on_text)
