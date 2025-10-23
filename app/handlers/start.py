@@ -38,6 +38,7 @@ def setup(router_: Router, db: Database, scheduler: LessonScheduler) -> None:
     router_.message.register(start_handler(db), CommandStart())
     router_.message.register(ping_handler, Command("ping"))
     router_.message.register(handle_set_time(db), F.text == SET_TIME_BUTTON)
+    router_.message.register(unsubscribe, Command("unsubscribe"))
     router_.message.register(
         process_time_input(db, scheduler, unsubscribe),
         StateFilter(TimeSettings.waiting_for_time),
@@ -100,6 +101,9 @@ def process_time_input(
 ):
     async def handler(message: types.Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
+
+        if text.startswith("/"):
+            return
 
         user = message.from_user
         db_user = None
