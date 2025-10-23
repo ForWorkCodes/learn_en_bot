@@ -59,7 +59,14 @@ class LessonScheduler:
             self.scheduler.remove_job(self._daily_job_id(user_id))
 
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user or user.daily_hour is None or user.daily_minute is None:
+        if (
+            not user
+            or not user.is_subscribed
+            or user.daily_hour is None
+            or user.daily_minute is None
+            or not (0 <= user.daily_hour <= 23)
+            or not (0 <= user.daily_minute <= 59)
+        ):
             return
 
         self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
@@ -111,7 +118,13 @@ class LessonScheduler:
     async def _schedule_existing_custom_jobs(self) -> None:
         users = await asyncio.to_thread(self.db.list_users)
         for user in users:
-            if user.daily_hour is None or user.daily_minute is None:
+            if (
+                not user.is_subscribed
+                or user.daily_hour is None
+                or user.daily_minute is None
+                or not (0 <= user.daily_hour <= 23)
+                or not (0 <= user.daily_minute <= 59)
+            ):
                 continue
             self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
 
@@ -157,7 +170,7 @@ class LessonScheduler:
 
     async def _send_custom_job(self, user_id: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             return
         await self._send_assignment_to_user(user, schedule_followups=True)
 
@@ -170,14 +183,18 @@ class LessonScheduler:
             await self.bot.send_message(
                 chat_id=user.chat_id,
                 text=text.markdown,
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(send_audio=bool(user.send_audio)),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
 
-        await self._send_voice_message(user.chat_id, text)
+        await self._send_voice_message(
+            user.chat_id,
+            text,
+            send_audio=bool(user.send_audio),
+        )
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -187,7 +204,7 @@ class LessonScheduler:
 
     async def _send_followup(self, user_id: int, assignment_id: int, which: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             return
 
         assignment = await asyncio.to_thread(self.db.get_today_assignment, user.id)
@@ -231,7 +248,7 @@ class LessonScheduler:
                 continue
 
             user = await asyncio.to_thread(self.db.get_user_by_id, assignment.user_id)
-            if not user:
+            if not user or not user.is_subscribed:
                 await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
                 continue
 
@@ -239,7 +256,7 @@ class LessonScheduler:
 
     async def _retry_assignment_delivery(self, user_id: int, assignment_id: int) -> None:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
-        if not user:
+        if not user or not user.is_subscribed:
             await asyncio.to_thread(self.db.mark_assignment_delivered, assignment_id)
             return
 
@@ -275,14 +292,18 @@ class LessonScheduler:
             await self.bot.send_message(
                 chat_id=user.chat_id,
                 text=text.markdown,
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(send_audio=bool(user.send_audio)),
             )
         except Exception:
             self.logger.exception("Failed to send assignment message to chat %s", user.chat_id)
             self._schedule_delivery_retry(user.id, assignment.id)
             return
 
-        await self._send_voice_message(user.chat_id, text)
+        await self._send_voice_message(
+            user.chat_id,
+            text,
+            send_audio=bool(user.send_audio),
+        )
 
         await asyncio.to_thread(self.db.mark_assignment_delivered, assignment.id)
         with suppress(Exception):
@@ -292,7 +313,12 @@ class LessonScheduler:
             self.plan_followups(user.id, assignment.id)
 
 
-    async def _send_voice_message(self, chat_id: int, formatted: FormattedMessage) -> None:
+    async def _send_voice_message(
+        self, chat_id: int, formatted: FormattedMessage, *, send_audio: bool
+    ) -> None:
+        if not send_audio:
+            return
+
         plain_value = (formatted.plain or "").strip()
         if not plain_value:
             return

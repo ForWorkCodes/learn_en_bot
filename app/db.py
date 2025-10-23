@@ -23,12 +23,35 @@ class Database:
         try:
             with self.engine.begin() as conn:
                 inspector = inspect(conn)
-                columns = {col["name"] for col in inspector.get_columns("assignments")}
-                if "delivered_at" not in columns:
-                    conn.execute(text("ALTER TABLE assignments ADD COLUMN delivered_at TIMESTAMP NULL"))
-                    conn.execute(text("UPDATE assignments SET delivered_at = CURRENT_TIMESTAMP"))
+
+                assignment_columns = {
+                    column["name"] for column in inspector.get_columns("assignments")
+                }
+                if "delivered_at" not in assignment_columns:
+                    conn.execute(
+                        text("ALTER TABLE assignments ADD COLUMN delivered_at TIMESTAMP NULL")
+                    )
+                    conn.execute(
+                        text("UPDATE assignments SET delivered_at = CURRENT_TIMESTAMP")
+                    )
+
+                user_columns = {column["name"] for column in inspector.get_columns("users")}
+                if "send_audio" not in user_columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE users "
+                            "ADD COLUMN send_audio BOOLEAN NOT NULL DEFAULT TRUE"
+                        )
+                    )
+                if "is_subscribed" not in user_columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE users "
+                            "ADD COLUMN is_subscribed BOOLEAN NOT NULL DEFAULT TRUE"
+                        )
+                    )
         except Exception:
-            logger.exception("Failed to ensure delivered_at column exists")
+            logger.exception("Failed to ensure database schema is up to date")
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -63,13 +86,36 @@ class Database:
         with self.session() as db:
             return db.scalar(select(User).where(User.chat_id == chat_id))
 
-    def update_user_daily_time(self, user_id: int, hour: int | None, minute: int | None) -> None:
+    def update_user_daily_time(
+        self,
+        user_id: int,
+        hour: int | None,
+        minute: int | None,
+        *,
+        mark_subscribed: bool | None = None,
+    ) -> None:
         with self.session() as db:
             user = db.get(User, user_id)
             if not user:
                 return
             user.daily_hour = hour
             user.daily_minute = minute
+            if mark_subscribed is not None:
+                user.is_subscribed = mark_subscribed
+
+    def update_user_subscription(self, user_id: int, subscribed: bool) -> None:
+        with self.session() as db:
+            user = db.get(User, user_id)
+            if not user:
+                return
+            user.is_subscribed = subscribed
+
+    def update_user_audio_preference(self, user_id: int, send_audio: bool) -> None:
+        with self.session() as db:
+            user = db.get(User, user_id)
+            if not user:
+                return
+            user.send_audio = send_audio
 
     def list_users(self) -> List[User]:
         with self.session() as db:
@@ -79,7 +125,10 @@ class Database:
         with self.session() as db:
             return list(
                 db.scalars(
-                    select(User).where((User.daily_hour.is_(None)) | (User.daily_minute.is_(None)))
+                    select(User).where(
+                        (User.daily_hour.is_(None) | User.daily_minute.is_(None))
+                        & (User.is_subscribed.is_(True))
+                    )
                 ).all()
             )
 
