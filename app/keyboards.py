@@ -16,7 +16,6 @@ def _base_menu_rows(send_audio: bool) -> list[list[KeyboardButton]]:
         KeyboardButton(text=GET_VERB_NOW_BUTTON),
         KeyboardButton(text=GET_NEW_VERB_BUTTON),
         KeyboardButton(text=AUDIO_DISABLE_BUTTON if send_audio else AUDIO_ENABLE_BUTTON),
-        KeyboardButton(text=UNSUBSCRIBE_BUTTON),
     ]
 
     rows: list[list[KeyboardButton]] = []
