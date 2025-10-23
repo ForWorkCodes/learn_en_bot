@@ -97,20 +97,24 @@ async def main() -> None:
     # Bot menu commands
     try:
         from aiogram.types import BotCommand
-        await bot.set_my_commands([
+
+        commands = [
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
-        ])
+        ]
+
+        await bot.set_my_commands(commands)
     except Exception:
         logger.warning("Failed to set bot commands", exc_info=True)
 
     # Ensure commands descriptions are set in readable Russian
     try:
         from aiogram.types import BotCommand
-        await bot.set_my_commands([
+
+        commands = [
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="lesson", description="Напомнить фразовый глагол"),
-        ])
+        ]
+
+        await bot.set_my_commands(commands)
     except Exception:
         logger.warning("Failed to override bot commands", exc_info=True)
 
