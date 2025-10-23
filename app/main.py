@@ -100,6 +100,7 @@ async def main() -> None:
 
         commands = [
             BotCommand(command="start", description="Начать"),
+            BotCommand(command="unsubscribe", description="Отписаться от рассылки"),
         ]
 
         await bot.set_my_commands(commands)
@@ -112,6 +113,7 @@ async def main() -> None:
 
         commands = [
             BotCommand(command="start", description="Начать"),
+            BotCommand(command="unsubscribe", description="Отписаться от рассылки"),
         ]
 
         await bot.set_my_commands(commands)
