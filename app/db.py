@@ -29,6 +29,14 @@ class Database:
         self.engine = create_engine(url, echo=False, future=True)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session, future=True)
 
+    def _delete_followups_for_user(self, db: Session, user_id: int) -> None:
+        assignment_ids = select(Assignment.id).where(Assignment.user_id == user_id)
+        db.execute(
+            delete(AssignmentFollowup).where(
+                AssignmentFollowup.assignment_id.in_(assignment_ids)
+            )
+        )
+
     def init_db(self) -> None:
         Base.metadata.create_all(self.engine)
         try:
@@ -113,6 +121,8 @@ class Database:
             user.daily_minute = minute
             if mark_subscribed is not None:
                 user.is_subscribed = mark_subscribed
+                if not mark_subscribed:
+                    self._delete_followups_for_user(db, user_id)
 
     def update_user_subscription(self, user_id: int, subscribed: bool) -> None:
         with self.session() as db:
@@ -120,6 +130,8 @@ class Database:
             if not user:
                 return
             user.is_subscribed = subscribed
+            if not subscribed:
+                self._delete_followups_for_user(db, user_id)
 
     def update_user_audio_preference(self, user_id: int, send_audio: bool) -> None:
         with self.session() as db:
@@ -127,6 +139,10 @@ class Database:
             if not user:
                 return
             user.send_audio = send_audio
+
+    def clear_user_followups(self, user_id: int) -> None:
+        with self.session() as db:
+            self._delete_followups_for_user(db, user_id)
 
     def list_users(self) -> List[User]:
         with self.session() as db:
