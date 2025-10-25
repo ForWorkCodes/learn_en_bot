@@ -1,15 +1,26 @@
 from contextlib import contextmanager
-from typing import Iterator, List, Optional
+from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Iterator, List, Optional
 import logging
 
-from sqlalchemy import create_engine, select, text, inspect
+from sqlalchemy import create_engine, select, text, inspect, delete, update
 from sqlalchemy.orm import sessionmaker, Session
 
-from .models import Base, User, Assignment
+from .models import Base, User, Assignment, AssignmentFollowup
 
 
 logger = logging.getLogger("learn_en_bot.db")
+
+
+@dataclass
+class DueFollowup:
+    id: int
+    assignment_id: int
+    user_id: int
+    chat_id: int
+    which: int
+    run_at: datetime
 
 
 class Database:
@@ -17,6 +28,14 @@ class Database:
         # echo=False чтобы не захламлять вывод; можно поставить True для отладки
         self.engine = create_engine(url, echo=False, future=True)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session, future=True)
+
+    def _delete_followups_for_user(self, db: Session, user_id: int) -> None:
+        assignment_ids = select(Assignment.id).where(Assignment.user_id == user_id)
+        db.execute(
+            delete(AssignmentFollowup).where(
+                AssignmentFollowup.assignment_id.in_(assignment_ids)
+            )
+        )
 
     def init_db(self) -> None:
         Base.metadata.create_all(self.engine)
@@ -102,6 +121,8 @@ class Database:
             user.daily_minute = minute
             if mark_subscribed is not None:
                 user.is_subscribed = mark_subscribed
+                if not mark_subscribed:
+                    self._delete_followups_for_user(db, user_id)
 
     def update_user_subscription(self, user_id: int, subscribed: bool) -> None:
         with self.session() as db:
@@ -109,6 +130,8 @@ class Database:
             if not user:
                 return
             user.is_subscribed = subscribed
+            if not subscribed:
+                self._delete_followups_for_user(db, user_id)
 
     def update_user_audio_preference(self, user_id: int, send_audio: bool) -> None:
         with self.session() as db:
@@ -116,6 +139,10 @@ class Database:
             if not user:
                 return
             user.send_audio = send_audio
+
+    def clear_user_followups(self, user_id: int) -> None:
+        with self.session() as db:
+            self._delete_followups_for_user(db, user_id)
 
     def list_users(self) -> List[User]:
         with self.session() as db:
@@ -222,6 +249,11 @@ class Database:
             assgn = db.get(Assignment, assignment_id)
             if assgn:
                 assgn.status = "mastered"
+                db.execute(
+                    delete(AssignmentFollowup).where(
+                        AssignmentFollowup.assignment_id == assignment_id
+                    )
+                )
 
     def mark_followup_sent(self, assignment_id: int, which: int) -> None:
         with self.session() as db:
@@ -244,3 +276,93 @@ class Database:
             return list(
                 db.scalars(select(Assignment).where(Assignment.delivered_at.is_(None))).all()
             )
+
+    def schedule_followups(
+        self, assignment_id: int, followups: List[tuple[int, datetime]]
+    ) -> None:
+        with self.session() as db:
+            existing = {
+                f.which: f
+                for f in db.scalars(
+                    select(AssignmentFollowup).where(
+                        AssignmentFollowup.assignment_id == assignment_id
+                    )
+                ).all()
+            }
+
+            desired = {which for which, _ in followups}
+
+            for which, run_at in followups:
+                entry = existing.get(which)
+                if entry:
+                    entry.run_at = run_at
+                else:
+                    db.add(
+                        AssignmentFollowup(
+                            assignment_id=assignment_id, which=which, run_at=run_at
+                        )
+                    )
+
+            for which, entry in existing.items():
+                if which not in desired:
+                    db.delete(entry)
+
+    def clear_followups(self, assignment_id: int) -> None:
+        with self.session() as db:
+            db.execute(
+                delete(AssignmentFollowup).where(
+                    AssignmentFollowup.assignment_id == assignment_id
+                )
+            )
+
+    def list_due_followups(self, now_utc: datetime) -> List[DueFollowup]:
+        with self.session() as db:
+            stmt = (
+                select(
+                    AssignmentFollowup.id,
+                    AssignmentFollowup.assignment_id,
+                    Assignment.user_id,
+                    User.chat_id,
+                    AssignmentFollowup.which,
+                    AssignmentFollowup.run_at,
+                )
+                .join(Assignment, Assignment.id == AssignmentFollowup.assignment_id)
+                .join(User, User.id == Assignment.user_id)
+                .where(
+                    AssignmentFollowup.run_at <= now_utc,
+                    Assignment.status == "assigned",
+                    User.is_subscribed.is_(True),
+                )
+            )
+            rows = db.execute(stmt).all()
+
+        return [
+            DueFollowup(
+                id=followup_id,
+                assignment_id=assignment_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                which=which,
+                run_at=run_at,
+            )
+            for (
+                followup_id,
+                assignment_id,
+                user_id,
+                chat_id,
+                which,
+                run_at,
+            ) in rows
+        ]
+
+    def postpone_followup(self, followup_id: int, new_run_at: datetime) -> None:
+        with self.session() as db:
+            db.execute(
+                update(AssignmentFollowup)
+                .where(AssignmentFollowup.id == followup_id)
+                .values(run_at=new_run_at)
+            )
+
+    def remove_followup(self, followup_id: int) -> None:
+        with self.session() as db:
+            db.execute(delete(AssignmentFollowup).where(AssignmentFollowup.id == followup_id))

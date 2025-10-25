@@ -198,6 +198,7 @@ def handle_unsubscribe(db: Database, scheduler: LessonScheduler) -> UnsubscribeH
             None,
             mark_subscribed=False,
         )
+        await asyncio.to_thread(db.clear_user_followups, db_user.id)
         await scheduler.reschedule_user(db_user.id)
 
         if state:

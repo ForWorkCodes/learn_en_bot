@@ -11,6 +11,7 @@ from aiogram.types import BufferedInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from .db import Database
 from .gemini import GeminiClient
@@ -45,6 +46,7 @@ class LessonScheduler:
         await self._schedule_existing_custom_jobs()
         self._schedule_default_job()
         await self._deliver_pending_assignments()
+        self._schedule_followup_processor()
 
     def start(self) -> None:
         if not self.scheduler.running:
@@ -71,7 +73,7 @@ class LessonScheduler:
 
         self._schedule_daily_job(user.id, user.daily_hour, user.daily_minute)
 
-    def plan_followups(self, user_id: int, assignment_id: int) -> None:
+    async def plan_followups(self, user_id: int, assignment_id: int) -> None:
         base_dt = datetime.now(self.timezone)
 
         # Allowed window: Today 11:00–23:00 (inclusive), local tz
@@ -105,15 +107,17 @@ class LessonScheduler:
             if not uniq or (t - uniq[-1]).total_seconds() >= 60:
                 uniq.append(t)
 
-        # Schedule up to two follow-ups
+        followups = []
         for idx, when in enumerate(uniq[:2], start=1):
-            self.scheduler.add_job(
-                self._send_followup,
-                trigger=DateTrigger(run_date=when, timezone=self.timezone),
-                args=[user_id, assignment_id, idx],
-                id=self._followup_job_id(assignment_id, idx),
-                replace_existing=True,
+            run_at_utc = when.astimezone(pytz.UTC).replace(tzinfo=None)
+            followups.append((idx, run_at_utc))
+
+        if followups:
+            await asyncio.to_thread(
+                self.db.schedule_followups, assignment_id, followups
             )
+        else:
+            await asyncio.to_thread(self.db.clear_followups, assignment_id)
 
     async def _schedule_existing_custom_jobs(self) -> None:
         users = await asyncio.to_thread(self.db.list_users)
@@ -147,6 +151,14 @@ class LessonScheduler:
             self._run_default_job,
             trigger=trigger,
             id="daily_assignment",
+            replace_existing=True,
+        )
+
+    def _schedule_followup_processor(self) -> None:
+        self.scheduler.add_job(
+            self._process_followups,
+            trigger=IntervalTrigger(minutes=1, timezone=self.timezone),
+            id="followups_tick",
             replace_existing=True,
         )
 
@@ -200,21 +212,21 @@ class LessonScheduler:
         with suppress(Exception):
             self.scheduler.remove_job(self._delivery_retry_job_id(assignment.id))
         if need_followups and assignment.status == "assigned":
-            self.plan_followups(user.id, assignment.id)
+            await self.plan_followups(user.id, assignment.id)
 
-    async def _send_followup(self, user_id: int, assignment_id: int, which: int) -> None:
+    async def _send_followup(self, user_id: int, assignment_id: int, which: int) -> str:
         user = await asyncio.to_thread(self.db.get_user_by_id, user_id)
         if not user or not user.is_subscribed:
-            return
+            return "skip"
 
         assignment = await asyncio.to_thread(self.db.get_today_assignment, user.id)
         if not assignment or assignment.id != assignment_id or assignment.status == "mastered":
-            return
+            return "skip"
 
         if which == 1 and assignment.followup1_sent:
-            return
+            return "skip"
         if which == 2 and assignment.followup2_sent:
-            return
+            return "skip"
 
         reminder = (
             f"{bold('Напоминание')}: {escape('вернись к фразовому глаголу')} «{escape(assignment.phrasal_verb)}». "
@@ -223,17 +235,38 @@ class LessonScheduler:
 
         try:
             await self.bot.send_message(chat_id=user.chat_id, text=reminder)
-            await asyncio.to_thread(self.db.mark_followup_sent, assignment.id, which)
         except Exception:
             self.logger.exception("Failed to send follow-up to chat %s", user.chat_id)
+            return "retry"
+
+        return "sent"
+
+    async def _process_followups(self) -> None:
+        now_utc = datetime.utcnow()
+        due = await asyncio.to_thread(self.db.list_due_followups, now_utc)
+        if not due:
+            return
+
+        for followup in due:
+            result = await self._send_followup(
+                followup.user_id, followup.assignment_id, followup.which
+            )
+            if result == "sent":
+                await asyncio.to_thread(
+                    self.db.mark_followup_sent, followup.assignment_id, followup.which
+                )
+                await asyncio.to_thread(self.db.remove_followup, followup.id)
+            elif result == "skip":
+                await asyncio.to_thread(self.db.remove_followup, followup.id)
+            elif result == "retry":
+                retry_at = now_utc + timedelta(minutes=15)
+                await asyncio.to_thread(
+                    self.db.postpone_followup, followup.id, retry_at
+                )
 
     @staticmethod
     def _daily_job_id(user_id: int) -> str:
         return f"daily_assignment_{user_id}"
-
-    @staticmethod
-    def _followup_job_id(assignment_id: int, which: int) -> str:
-        return f"followup{which}_{assignment_id}"
 
     @staticmethod
     def _delivery_retry_job_id(assignment_id: int) -> str:
@@ -310,7 +343,7 @@ class LessonScheduler:
             self.scheduler.remove_job(self._delivery_retry_job_id(assignment.id))
 
         if schedule_followups and assignment.status == "assigned":
-            self.plan_followups(user.id, assignment.id)
+            await self.plan_followups(user.id, assignment.id)
 
 
     async def _send_voice_message(
