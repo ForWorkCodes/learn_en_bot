@@ -116,7 +116,7 @@ def setup(
 
         await asyncio.to_thread(db.mark_assignment_delivered, assignment.id)
         if created:
-            scheduler.plan_followups(db_user.id, assignment.id)
+            await scheduler.plan_followups(db_user.id, assignment.id)
 
     async def on_lesson(message: types.Message) -> None:
         await send_assignment(message, message.from_user, force_new=False)

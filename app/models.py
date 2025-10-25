@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import Integer, String, DateTime, Date, ForeignKey, Boolean, Text
+from sqlalchemy import Integer, String, DateTime, Date, ForeignKey, Boolean, Text, UniqueConstraint
 
 
 class Base(DeclarativeBase):
@@ -48,3 +48,18 @@ class Assignment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user: Mapped["User"] = relationship(backref="assignments")
+
+
+class AssignmentFollowup(Base):
+    __tablename__ = "assignment_followups"
+    __table_args__ = (UniqueConstraint("assignment_id", "which", name="uq_followup_assignment_which"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    assignment_id: Mapped[int] = mapped_column(
+        ForeignKey("assignments.id", ondelete="CASCADE"), index=True
+    )
+    which: Mapped[int] = mapped_column(Integer)
+    run_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    assignment: Mapped["Assignment"] = relationship(backref="followups")
