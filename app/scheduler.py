@@ -90,9 +90,9 @@ class LessonScheduler:
             # If before the window start, push to window start
             if candidate < window_start:
                 candidate = window_start
-            # If after window end, skip
+            # If after window end, clamp to the end of the window
             if candidate > window_end:
-                continue
+                candidate = window_end
             # Ensure after assignment time
             if candidate <= base_dt:
                 # If there is still time to send before window_end, try a small delta
@@ -219,8 +219,12 @@ class LessonScheduler:
         if not user or not user.is_subscribed:
             return "skip"
 
-        assignment = await asyncio.to_thread(self.db.get_today_assignment, user.id)
-        if not assignment or assignment.id != assignment_id or assignment.status == "mastered":
+        assignment = await asyncio.to_thread(self.db.get_assignment_by_id, assignment_id)
+        if (
+            not assignment
+            or assignment.user_id != user_id
+            or assignment.status == "mastered"
+        ):
             return "skip"
 
         if which == 1 and assignment.followup1_sent:
