@@ -5,7 +5,7 @@ import wave
 import base64
 import json
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -323,15 +323,21 @@ class GeminiClient:
         )
         return self.generate(prompt, fallback="Совет дня: выучи 3 новых слова и составь с ними предложения.")
 
-    def generate_phrasal_verb(self) -> dict:
-        prompt = (
-            "Подбери один английский фразовый глагол для изучения сегодня. "
-            "Ответ дай строго в JSON с полями: "
-            "verb (строка), translation (краткий перевод на русский), "
-            "explanation (короткое пояснение на русском без приветствий и обращений), "
-            "examples (массив из 2-3 объектов с полями text и translation, где text — предложение на английском, "
-            "а translation — краткий перевод на русский)."
-        )
+    def generate_phrasal_verb(self, *, exclude: Sequence[str] | None = None) -> dict:
+        prompt_parts = [
+            "Подбери один английский фразовый глагол для изучения сегодня.",
+            "Ответ дай строго в JSON с полями: verb (строка), translation (краткий перевод на русский), ",
+            "explanation (короткое пояснение на русском без приветствий и обращений), examples (массив из 2-3 объектов с полями text и translation, где text — предложение на английском, а translation — краткий перевод на русский).",
+        ]
+        if exclude:
+            unique_verbs = sorted({verb.strip() for verb in exclude if verb and verb.strip()})
+            if unique_verbs:
+                listed = ", ".join(unique_verbs)
+                prompt_parts.append(
+                    "Не предлагай ничего из этого списка, пользователь уже изучал эти фразовые глаголы: "
+                    f"{listed}."
+                )
+        prompt = " ".join(prompt_parts)
         raw = self.generate(prompt)
         import json, re
         # Попытаться извлечь JSON из ответа

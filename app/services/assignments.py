@@ -27,7 +27,8 @@ async def ensure_daily_assignment(
         )
         return existing, message, False
 
-    data = await asyncio.to_thread(gemini.generate_phrasal_verb)
+    existing_verbs = await asyncio.to_thread(db.list_user_phrasal_verbs, user.id, limit=100)
+    data = await asyncio.to_thread(gemini.generate_phrasal_verb, exclude=existing_verbs)
     examples_json = json.dumps(data.get("examples", []), ensure_ascii=False)
     assignment = await asyncio.to_thread(
         db.ensure_today_assignment,
