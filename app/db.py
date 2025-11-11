@@ -277,6 +277,25 @@ class Database:
                 db.scalars(select(Assignment).where(Assignment.delivered_at.is_(None))).all()
             )
 
+    def list_user_phrasal_verbs(self, user_id: int, *, limit: int | None = None) -> List[str]:
+        with self.session() as db:
+            stmt = (
+                select(Assignment.phrasal_verb)
+                .where(Assignment.user_id == user_id)
+                .order_by(Assignment.date_assigned.desc(), Assignment.created_at.desc())
+            )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            verbs = db.scalars(stmt).all()
+            seen: set[str] = set()
+            unique: list[str] = []
+            for verb in verbs:
+                if verb in seen:
+                    continue
+                seen.add(verb)
+                unique.append(verb)
+            return unique
+
     def schedule_followups(
         self, assignment_id: int, followups: List[tuple[int, datetime]]
     ) -> None:
