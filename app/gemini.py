@@ -5,6 +5,7 @@ import wave
 import base64
 import json
 import logging
+import re
 from typing import Optional, Sequence
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -378,12 +379,17 @@ class GeminiClient:
             f"Ответ пользователя: {user_text}\n"
         )
         raw = self.generate(prompt)
-        import json, re
+
+        parsed_text = self._parse_usage_text_response(raw)
+        if parsed_text is not None:
+            return parsed_text
+
         try:
-            m = re.search(r"\{[\s\S]*\}", raw)
-            if m:
-                raw = m.group(0)
-            data = json.loads(raw)
+            json_payload = raw or ""
+            json_match = re.search(r"\{[\s\S]*\}", json_payload)
+            if json_match:
+                json_payload = json_match.group(0)
+            data = json.loads(json_payload)
             feedback = str(data.get("feedback", ""))
             score = int(data.get("score", 0))
             mastered = score >= 4
@@ -395,3 +401,61 @@ class GeminiClient:
                 "Спасибо! Постарайся составить короткое предложение с этим фразовым глаголом.",
                 False,
             )
+
+    def _parse_usage_text_response(self, raw: str) -> Optional[tuple[str, bool]]:
+        candidate = (raw or "").strip()
+        if not candidate:
+            return None
+
+        if candidate.lstrip().startswith("{"):
+            return None
+
+        if re.search(r"\{[^}]+\}", candidate):
+            return None
+
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```[a-zA-Z]*\n?", "", candidate)
+        if candidate.endswith("```"):
+            candidate = candidate[:-3]
+
+        lines = [line.strip() for line in candidate.splitlines() if line.strip()]
+        if not lines:
+            return None
+
+        score: Optional[int] = None
+        feedback_parts: list[str] = []
+        score_patterns = [
+            re.compile(r"([1-5])\s*(?:/|из)\s*5"),
+            re.compile(r"(?:score|rating|оценка|бал+ы?)[^0-9]{0,10}([1-5])", re.IGNORECASE),
+        ]
+
+        for line in lines:
+            working = line
+            for pattern in score_patterns:
+                match = pattern.search(working)
+                if match:
+                    if score is None:
+                        score = int(match.group(1))
+                    working = (working[: match.start()] + working[match.end() :]).strip(" :-.,")
+            working = re.sub(
+                r"^(?:feedback|комментарий|ответ)[:\-]\s*",
+                "",
+                working,
+                flags=re.IGNORECASE,
+            )
+            working = working.strip()
+            if not working:
+                continue
+            if re.fullmatch(r"(?:score|rating|оценка|бал+ы?)[:\-]?", working, re.IGNORECASE):
+                continue
+            if working:
+                feedback_parts.append(working)
+
+        if score is None:
+            return None
+
+        feedback_text = " ".join(feedback_parts).strip()
+        if not feedback_text:
+            feedback_text = "Хорошая попытка! Попробуй составить ещё одно предложение."
+        mastered = score >= 4
+        return feedback_text, mastered
