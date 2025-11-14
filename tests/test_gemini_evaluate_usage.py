@@ -31,3 +31,14 @@ def test_evaluate_usage_falls_back_to_json(client):
 
     assert feedback == "Добавь больше контекста."
     assert mastered is False
+
+
+def test_evaluate_usage_returns_error_message_on_failure(client):
+    client.generate = MagicMock(
+        return_value="{\"error\": {\"message\": \"Quota exceeded\", \"code\": 429}}"
+    )
+
+    feedback, mastered = client.evaluate_usage("pick up", "I pick book.")
+
+    assert feedback == "Quota exceeded"
+    assert mastered is False
