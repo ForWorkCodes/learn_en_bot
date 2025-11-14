@@ -390,17 +390,20 @@ class GeminiClient:
             if json_match:
                 json_payload = json_match.group(0)
             data = json.loads(json_payload)
-            feedback = str(data.get("feedback", ""))
-            score = int(data.get("score", 0))
-            mastered = score >= 4
+            feedback_raw = data.get("feedback", "")
+            feedback = str(feedback_raw).strip()
+            score_value = data.get("score")
+            score = int(score_value)
+            if not 1 <= score <= 5:
+                raise ValueError("Gemini usage response score is outside the expected range")
             if not feedback:
-                feedback = "Хорошая попытка! Попробуй составить ещё одно предложение."
+                raise ValueError("Gemini usage response feedback is empty")
+            mastered = score >= 4
             return feedback, mastered
-        except Exception:
-            return (
-                "Спасибо! Постарайся составить короткое предложение с этим фразовым глаголом.",
-                False,
-            )
+        except Exception as exc:
+            logger.error("Failed to parse Gemini usage response: %s", raw, exc_info=True)
+            error_message = self._extract_error_message(raw, exc)
+            return error_message, False
 
     def _parse_usage_text_response(self, raw: str) -> Optional[tuple[str, bool]]:
         candidate = (raw or "").strip()
@@ -459,3 +462,43 @@ class GeminiClient:
             feedback_text = "Хорошая попытка! Попробуй составить ещё одно предложение."
         mastered = score >= 4
         return feedback_text, mastered
+
+    def _extract_error_message(self, raw: str, exc: Exception | None = None) -> str:
+        candidate = (raw or "").strip()
+        if candidate:
+            json_match = re.search(r"\{[\s\S]*\}", candidate)
+            payload_to_parse = json_match.group(0) if json_match else candidate
+            try:
+                data = json.loads(payload_to_parse)
+            except Exception:
+                return candidate
+
+            if isinstance(data, dict):
+                error_fields = [
+                    data.get("error"),
+                    data.get("message"),
+                    data.get("detail"),
+                    data.get("details"),
+                ]
+                for field in error_fields:
+                    if isinstance(field, dict):
+                        message = field.get("message")
+                        if isinstance(message, str) and message.strip():
+                            return message.strip()
+                        continue
+                    if isinstance(field, str) and field.strip():
+                        return field.strip()
+                return candidate
+
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        message = item.get("message")
+                        if isinstance(message, str) and message.strip():
+                            return message.strip()
+            return candidate
+
+        if exc is not None:
+            return f"Gemini error: {exc}"
+
+        return "Gemini returned an unexpected empty response."
